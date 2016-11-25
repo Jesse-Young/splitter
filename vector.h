@@ -9,13 +9,24 @@ typedef unsigned int u32;
 typedef unsigned long long u64;
 typedef long long s64;
 
+////////////////////////////////////////
+#define SPT_VEC_FLAG_RIGHT      0
+#define SPT_VEC_FLAG_DATA       1
+#define SPT_VEC_FlAG_SIGNPOST   2
 
-#define SPT_VEC_FLAG_NLAST_MASK 8
-#define SPT_VEC_FLAG_RIGHT_MASK 1
+#define SPT_VEC_VALID       0
+#define SPT_VEC_INVALID     1     
+
+#define SPT_VEC_SIGNPOST_BIT    14
+#define SPT_VEC_SIGNPOST_MASK   ((1ul<<SPT_VEC_SIGNPOST_BIT)-1)
+
+///////////////////////////////
 
 #define SPT_VEC_POS_INDEX_BIT    8
 #define SPT_VEC_POS_INDEX_MASK 0x3F00
 #define SPT_VEC_POS_MULTI_MASK 0xFF
+
+#define SPT_VEC_SYS_FLAG_DATA      1
 
 #define spt_get_pos_index(x)                ((x&SPT_VEC_POS_INDEX_MASK)>>SPT_VEC_POS_INDEX_BIT)
 #define spt_get_pos_multi(x)                (x&SPT_VEC_POS_MULTI_MASK)
@@ -24,11 +35,9 @@ typedef long long s64;
 
 #define POW256(x)    (1<<(8*x))
 
-#define spt_set_vec_nlst(x)            (x = SPT_VEC_FLAG_NLAST_MASK)
-#define spt_nlst_is_set(x)            (x == SPT_VEC_FLAG_NLAST_MASK)
-#define spt_set_right_flag(x)        (x = SPT_VEC_FLAG_RIGHT_MASK)
-//#define spt_clr_vec_nlst(x)            (x &= ~SPT_VEC_FLAG_NLAST_MASK)
-#define spt_set_data_flag(x)        (x = 0)
+#define spt_set_invalid_flag(x)        (x.valid = SPT_VEC_INVALID)
+#define spt_set_right_flag(x)        (x.flag = SPT_VEC_FLAG_RIGHT)
+#define spt_set_data_flag(x)        (x.flag = SPT_VEC_FLAG_DATA)
 
 
 typedef struct chunk_head
@@ -45,6 +54,10 @@ typedef struct cluster_head
     unsigned int vec_free_head;
     unsigned int blk_free_head;
     unsigned int dblk_free_head;
+
+    unsigned int vec_buf_head;
+    unsigned int dblk_buf_head;
+    
     unsigned int pg_num_max;
     unsigned int pg_num_total;
     unsigned int pg_cursor;
@@ -77,12 +90,35 @@ typedef struct db_head_t
     unsigned int next;
 }db_head_t;
 
+typedef struct spt_data_hd
+{
+    int ref;/*引用计数*/
+    int rank;/*for test*/
+}spt_dhd;
+
+
 typedef struct spt_vec
 {
-    long long down:                23;
-    long long rdn:                23; /*鑷冲皯4瀛楄妭鎵嶅right or dataid or next*/
-    unsigned long long flag:     4;    /*8表示是一个向量串，rdn表示next；1表示rdn是right；0表明rdn是dataid*/
-    long long pos:                14;
+    union
+    {
+        volatile unsigned long long val;
+        struct 
+        {
+            volatile unsigned long long valid:      1;
+            volatile unsigned long long flag:       3;
+            volatile unsigned long long pos:        14;
+            volatile unsigned long long down:       23;
+            volatile unsigned long long rd:         23;    
+        };
+        struct 
+        {
+            volatile unsigned long long dummy_flag:         4;
+            volatile unsigned long long ext_sys_flg:        6;
+            volatile unsigned long long ext_usr_flg:        6;
+            volatile unsigned long long idx:                25;
+            volatile unsigned long long dummy_rd:           23;
+        };
+    };
 }spt_vec_t;
 
 typedef struct spt_vec_real
@@ -113,9 +149,9 @@ typedef struct vec_cmpret
 
 typedef struct spt_insert_info
 {
-    spt_vec_t_r *pcur_vec_r;
-    spt_vec_t_r *pn_vec_r;
-    u32 cur_vec;
+    spt_vec *pkey_vec;
+    u64 key_val;
+    u64 signpost;
     u64 startbit;
     u64 fs;
     u64 cmp_pos;

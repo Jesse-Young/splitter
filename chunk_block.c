@@ -455,6 +455,16 @@ void vec_list_free(cluster_head_t *pcluster, int id)
     return ;
 }
 
+void vec_free_to_buf(cluster_head_t *pcluster, int id)
+{
+
+}
+
+void db_free_to_buf(cluster_head_t *pcluster, int id)
+{
+
+}
+
 void test_p()
 {
     printf("haha\r\n");
