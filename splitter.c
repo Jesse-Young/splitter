@@ -911,12 +911,104 @@ int do_insert_signpost_right(cluster_head_t **ppclst, insert_info_t *pinsert, ch
 
 }
 
-int do_insert_up_via_r(cluster_head_t **ppclst, insert_info_t *pinsert, char *new_data)
+int do_insert_signpost_down(cluster_head_t **ppclst, insert_info_t *pinsert, char *new_data)
 {
+    spt_vec_t *ppre = NULL;
     spt_vec_t tmp_vec, cur_vec, pre_vec, *pcur, *pvec_a, *pvec_b, *pvec_s;
     char *pcur_data;//*ppre_data,
-    u64 fs_pos, signpost;
+    u64 startbit, endbit, len, fs_pos, signpost;
     u32 dataid, vecid_a, vecid_b, vecid_s;
+    char *pdata;
+
+    dataid = db_alloc(ppclst, &pdata);
+    if(pdata == 0)
+    {
+        /*申请新块，拆分*/
+        assert(0);
+        printf("\r\n%d\t%s", __LINE__, __FUNCTION__);
+        return SPT_NOMEM;
+    }
+    memcpy(pdata, new_data, DATA_SIZE);
+
+    tmp_vec.val = pinsert->key_val;
+    signpost = pinsert->signpost;
+
+    vecid_a = vec_alloc(ppclst, &pvec_a);
+    if(pvec_a == 0)
+    {
+        /*yzx释放资源， 申请新块，拆分*/
+        db_free(*ppclst, dataid);
+        return SPT_NOMEM;
+    }
+    pvec_a->val = 0;
+//    pvec_a->flag = SPT_VEC_FLAG_DATA;
+    pvec_a->pos = 0;
+    pvec_a->rd = tmp_vec.rd;
+//    pvec_a->down = tmp_vec.rd;
+
+    if(tmp_vec.ext_sys_flg == SPT_VEC_SYS_FLAG_DATA)
+    {
+        pvec_a->flag = SPT_VEC_FLAG_DATA;
+    }
+    else
+    {
+        pvec_a->flag = SPT_VEC_FLAG_RIGHT;
+    }
+    tmp_vec.rd = vecid_a;
+    vecid_b = vec_alloc(ppclst, &pvec_b);
+    if(pvec_b == 0)
+    {
+        /*yzx释放资源， 申请新块，拆分*/
+        db_free(*ppclst, dataid);
+        return SPT_NOMEM;
+    }
+    pvec_b->val = 0;
+    pvec_b->flag = SPT_VEC_FLAG_DATA;
+    pvec_b->pos = (pinsert->fs-1)&SPT_VEC_SIGNPOST_MASK;
+    pvec_b->rd = tmp_vec.rd;
+    pvec_b->down = SPT_NULL;
+    
+    if((pinsert->fs-1)-signpost > SPT_VEC_SIGNPOST_MASK)
+    {
+        vecid_s = vec_alloc(ppclst, &pvec_s);
+        if(pvec_s == 0)
+        {
+            /*yzx释放资源， 申请新块，拆分*/
+            db_free(*ppclst, dataid);
+            return SPT_NOMEM;
+        }
+        pvec_s->val = 0;        
+        pvec_s->idx = (pinsert->fs-1)>>SPT_VEC_SIGNPOST_BIT;
+        pvec_s->rd = vecid_b;
+
+        pvec_a->down = vecid_s;
+    }
+
+    if(tmp_vec.val == atomic64_cmpxchg((atomic64_t *)pinsert->pkey_vec, 
+                        pinsert->key_val, tmp_vec.val))
+    {
+        return SPT_OK;
+    }
+    else
+    {
+        db_free(*ppclst, dataid);
+        vec_free(*ppclst, vecid_a);
+        vec_free(*ppclst, vecid_b);
+        if(pvec_s != 0)
+        {
+            vec_free(*ppclst, vecid_s);
+        }        
+        return SPT_DO_AGAIN;
+    }
+}
+
+
+int do_insert_up_via_r(cluster_head_t **ppclst, insert_info_t *pinsert, char *new_data)
+{
+    spt_vec_t tmp_vec, cur_vec, pre_vec, *pcur, *pvec_a, *pvec_b, *pvec_s, *pvec_s2;
+    char *pcur_data;//*ppre_data,
+    u64 fs_pos, signpost;
+    u32 dataid, vecid_a, vecid_b, vecid_s, vecid_s2;
     char *pdata;
 
     pvec_s = 0;
@@ -1000,31 +1092,30 @@ int do_insert_up_via_r(cluster_head_t **ppclst, insert_info_t *pinsert, char *ne
         pvec_a->down = vecid_b;
 
         tmp_vec.rd = vecid_s;
-
+        signpost = pvec_s->idx << SPT_VEC_SIGNPOST_BIT;
     }
-    else if((pinsert->fs-1)-signpost > SPT_VEC_SIGNPOST_MASK)
+    else
     {
-        vecid_s = vec_alloc(ppclst, &pvec_s);
-        if(pvec_s == 0)
+        tmp_vec.rd = vecid_a;    
+    }
+    if((pinsert->fs-1)-signpost > SPT_VEC_SIGNPOST_MASK)
+    {
+        vecid_s2 = vec_alloc(ppclst, &pvec_s2);
+        if(pvec_s2 == 0)
         {
             /*yzx释放资源， 申请新块，拆分*/
             db_free(*ppclst, dataid);
             return SPT_NOMEM;
         }
-        pvec_s->val = 0;        
-        pvec_s->idx = (pinsert->fs-1)>>SPT_VEC_SIGNPOST_BIT;
-        pvec_s->rd = vecid_b;
+        pvec_s2->val = 0;        
+        pvec_s2->idx = (pinsert->fs-1)>>SPT_VEC_SIGNPOST_BIT;
+        pvec_s2->rd = vecid_b;
 
-        pvec_a->down = vecid_s;
-
-        tmp_vec.rd = vecid_a;
-
+        pvec_a->down = vecid_s2;
     }
     else
     {
         pvec_a->down = vecid_b;
-
-        tmp_vec.rd = vecid_a;        
     }
     if(tmp_vec.val == atomic64_cmpxchg((atomic64_t *)pinsert->pkey_vec, 
                         pinsert->key_val, tmp_vec.val))
@@ -1040,6 +1131,10 @@ int do_insert_up_via_r(cluster_head_t **ppclst, insert_info_t *pinsert, char *ne
         {
             vec_free(*ppclst, vecid_s);
         }
+        if(pvec_s2 != 0)
+        {
+            vec_free(*ppclst, vecid_s2);
+        }        
         return SPT_DO_AGAIN;
     }
 }
@@ -1180,10 +1275,10 @@ int do_insert_down_via_r(cluster_head_t **ppclst, insert_info_t *pinsert, char *
 /*cur->down == null, 首位为0 ，直接插到cur->down上*/
 int do_insert_last_down(cluster_head_t **ppclst, insert_info_t *pinsert, char *new_data)
 {
-    spt_vec_t tmp_vec, cur_vec, pre_vec, *pcur, *pvec_a, *pvec_b, *pvec_s;
+    spt_vec_t tmp_vec, cur_vec, pre_vec, *pcur, *pvec_a, *pvec_s;
     char *pcur_data;//*ppre_data,
     u64 fs_pos, signpost;
-    u32 dataid, vecid_a, vecid_b, vecid_s;
+    u32 dataid, vecid_a, vecid_s;
     char *pdata;
 
     pvec_s = 0;
@@ -1213,72 +1308,25 @@ int do_insert_last_down(cluster_head_t **ppclst, insert_info_t *pinsert, char *n
     pvec_a->rd = dataid;
     pvec_a->down = SPT_NULL;
 
-    if(tmp_vec.flag == SPT_VEC_FlAG_SIGNPOST)
+    if((pinsert->fs-1)-signpost > SPT_VEC_SIGNPOST_MASK)
     {
-        vecid_b = vec_alloc(ppclst, &pvec_b);
-        if(pvec_b == 0)
+        vecid_s = vec_alloc(ppclst, &pvec_s);
+        if(pvec_s == 0)
         {
             /*yzx释放资源， 申请新块，拆分*/
             db_free(*ppclst, dataid);
             return SPT_NOMEM;
         }
-        pvec_b->val = 0;
-//        pvec_b->flag = SPT_VEC_FLAG_DATA;
-        pvec_b->pos = 0;
-        pvec_b->rd = tmp_vec.rd;
-//        pvec_b->down = SPT_NULL;
-        if(tmp_vec.ext_sys_flg == SPT_VEC_SYS_FLAG_DATA)
-        {
-            tmp_vec.ext_sys_flg = 0;
-            pvec_b->flag = SPT_VEC_FLAG_DATA;
-        }
-        else
-        {
-            pvec_b->flag = SPT_VEC_FLAG_RIGHT;
-        }
-        tmp_vec.rd = vecid_b;
-        if((pinsert->fs-1)-signpost > SPT_VEC_SIGNPOST_MASK)
-        {
-            vecid_s = vec_alloc(ppclst, &pvec_s);
-            if(pvec_s == 0)
-            {
-                /*yzx释放资源， 申请新块，拆分*/
-                db_free(*ppclst, dataid);
-                return SPT_NOMEM;
-            }
-            pvec_s->val = 0;        
-            pvec_s->idx = (pinsert->fs-1)>>SPT_VEC_SIGNPOST_BIT;
-            pvec_s->rd = vecid_a;
+        pvec_s->val = 0;        
+        pvec_s->idx = (pinsert->fs-1)>>SPT_VEC_SIGNPOST_BIT;
+        pvec_s->rd = vecid_a;
 
-            pvec_b->down = vecid_s;
-        }
-        else
-        {
-            pvec_b->down = vecid_a;
-        }
+        tmp_vec->down = vecid_s;
     }
     else
     {
-        if((pinsert->fs-1)-signpost > SPT_VEC_SIGNPOST_MASK)
-        {
-            vecid_s = vec_alloc(ppclst, &pvec_s);
-            if(pvec_s == 0)
-            {
-                /*yzx释放资源， 申请新块，拆分*/
-                db_free(*ppclst, dataid);
-                return SPT_NOMEM;
-            }
-            pvec_s->val = 0;        
-            pvec_s->idx = (pinsert->fs-1)>>SPT_VEC_SIGNPOST_BIT;
-            pvec_s->rd = vecid_a;
-
-            tmp_vec->down = vecid_s;
-        }
-        else
-        {
-            tmp_vec->down = vecid_a;
-        }        
-    }
+        tmp_vec->down = vecid_a;
+    }        
 
     if(tmp_vec.val == atomic64_cmpxchg((atomic64_t *)pinsert->pkey_vec, 
                         pinsert->key_val, tmp_vec.val))
@@ -1289,10 +1337,6 @@ int do_insert_last_down(cluster_head_t **ppclst, insert_info_t *pinsert, char *n
     {
         db_free(*ppclst, dataid);
         vec_free(*ppclst, vecid_a);
-        if(pvec_b != 0)
-        {
-            vec_free(*ppclst, vecid_b);
-        }
         if(pvec_s != 0)
         {
             vec_free(*ppclst, vecid_s);
@@ -1300,6 +1344,96 @@ int do_insert_last_down(cluster_head_t **ppclst, insert_info_t *pinsert, char *n
         return SPT_DO_AGAIN;
     }
 }
+
+int do_insert_up_via_d(cluster_head_t **ppclst, insert_info_t *pinsert, char *new_data)
+{
+    spt_vec_t tmp_vec, cur_vec, pre_vec, *pcur, *pvec_a, *pvec_s;
+    char *pcur_data;//*ppre_data,
+    u64 fs_pos, signpost;
+    u32 dataid, vecid_a, vecid_s;
+    char *pdata;
+
+    pvec_s = 0;
+    dataid = db_alloc(ppclst, &pdata);
+    if(pdata == 0)
+    {
+        /*申请新块，拆分*/
+        assert(0);
+        printf("\r\n%d\t%s", __LINE__, __FUNCTION__);
+        return SPT_NOMEM;
+    }
+    memcpy(pdata, new_data, DATA_SIZE);
+
+    tmp_vec.val = pinsert->key_val;
+    signpost = tmp_vec.idx << SPT_VEC_SIGNPOST_BIT;
+
+    vecid_a = vec_alloc(ppclst, &pvec_a);
+    if(pvec_a == 0)
+    {
+        /*yzx释放资源， 申请新块，拆分*/
+        db_free(*ppclst, dataid);
+        return SPT_NOMEM;
+    }
+    pvec_a->val = 0;
+    pvec_a->flag = SPT_VEC_FLAG_DATA;
+    pvec_a->pos = (pinsert->fs-1)&SPT_VEC_SIGNPOST_MASK;
+    pvec_a->rd = dataid;
+
+    if((pinsert->fs-1)-signpost > SPT_VEC_SIGNPOST_MASK)
+    {
+        vecid_s = vec_alloc(ppclst, &pvec_s);
+        if(pvec_s == 0)
+        {
+            /*yzx释放资源， 申请新块，拆分*/
+            db_free(*ppclst, dataid);
+            return SPT_NOMEM;
+        }
+        pvec_s->val = 0;        
+        pvec_s->idx = (pinsert->fs-1)>>SPT_VEC_SIGNPOST_BIT;
+        pvec_s->rd = vecid_a;
+
+        if(tmp_vec.flag == SPT_VEC_FlAG_SIGNPOST)
+        {
+            pvec_a->down = tmp_vec.rd;
+            tmp_vec->rd = vecid_s;
+        }
+        else
+        {
+            pvec_a->down = tmp_vec.down;
+            tmp_vec->down = vecid_s;
+        }        
+    }
+    else
+    {
+        if(tmp_vec.flag == SPT_VEC_FlAG_SIGNPOST)
+        {
+            pvec_a->down = tmp_vec.rd;
+            tmp_vec.rd = vecid_a;
+        }
+        else
+        {
+            pvec_a->down = tmp_vec.down;
+            tmp_vec.down = vecid_a;
+        }
+    }
+    if(tmp_vec.val == atomic64_cmpxchg((atomic64_t *)pinsert->pkey_vec, 
+                        pinsert->key_val, tmp_vec.val))
+    {
+        return SPT_OK;
+    }
+    else
+    {
+        db_free(*ppclst, dataid);
+        vec_free(*ppclst, vecid_a);
+        if(pvec_s != 0)
+        {
+            vec_free(*ppclst, vecid_s);
+        }
+        return SPT_DO_AGAIN;
+    }
+
+}
+
 
 int do_insert_first_set(cluster_head_t **ppclst, u32 cur_vec, char *new_data)
 {
@@ -1354,107 +1488,6 @@ int do_insert_first_set(cluster_head_t **ppclst, u32 cur_vec, char *new_data)
     pmdf_vec->value.data = SPT_INVALID;
     pmdf_vec->value.down = SPT_INVALID;
     pmdf_vec->value.right = vec_a;
-    pmdf_vec->value.pos = SPT_INVALID;
-    
-    pmdf_vec->next = pmdf_ent->md_head;
-    pmdf_ent->md_head = pmdf_vec;
-
-    do_modify(ppclst, pmdf_ent);
-    return 0;
-}
-
-
-
-int do_insert_up_via_d(cluster_head_t **ppclst, insert_info_t *pinsert, char *new_data)
-{
-    u32 dataid, vec_a, vec_b;
-    char *pdata;
-    spt_md_entirety *pmdf_ent;
-    spt_md_vec_t *pmdf_vec;
-    spt_vec_t_r tmp_vec_r, *pdown_r, *pcur_r;
-    spt_vec_t *pvec_a, *pvec_b;
-    u64 startbit, fs;
-
-    dataid = db_alloc(ppclst, &pdata);
-    if(pdata == 0)
-    {
-        /*申请新块，拆分*/
-        assert(0);
-        printf("\r\n%d\t%s", __LINE__, __FUNCTION__);
-        return 1;
-    }
-    memcpy(pdata, new_data, DATA_SIZE);
-
-    pmdf_ent = malloc(sizeof(spt_md_entirety));
-    if(pmdf_ent == NULL)
-    {
-        assert(0);
-        printf("\r\n%d\t%s", __LINE__, __FUNCTION__);
-        return 1;
-    }
-    pmdf_ent->md_head = NULL;
-    pmdf_ent->free_head = NULL;
-    pmdf_ent->del_head = NULL;
-
-    pdown_r = pinsert->pn_vec_r;
-    pcur_r = pinsert->pcur_vec_r;
-    startbit =  pinsert->startbit;
-    fs = pinsert->fs;
-
-    if(pdown_r->pos != 0)
-    {
-        pmdf_vec = malloc(sizeof(spt_md_vec_t));
-        if(pmdf_vec == NULL)
-        {
-            assert(0);
-            printf("\r\n%d\t%s", __LINE__, __FUNCTION__);
-            return 1;
-        }
-        pmdf_vec->vec_id = pcur_r->down;
-        pmdf_vec->value.data = SPT_INVALID;
-        pmdf_vec->value.down = SPT_INVALID;
-        pmdf_vec->value.right = SPT_INVALID;
-        pmdf_vec->value.pos = pdown_r->pos + startbit - fs;
-        
-        pmdf_vec->next = pmdf_ent->md_head;
-        pmdf_ent->md_head = pmdf_vec;
-    }
-
-    tmp_vec_r.data = dataid;
-    tmp_vec_r.pos = 0;//最右边一块的pos简化记录为0
-    tmp_vec_r.down = SPT_NULL;
-    tmp_vec_r.right = SPT_NULL;
-    vec_b = construct_vec_new(ppclst, &tmp_vec_r, &pvec_b);
-    if(pvec_b == NULL)
-    {
-        assert(0);
-        printf("\r\n%d\t%s", __LINE__, __FUNCTION__);
-        return 1;
-    } 
-
-    tmp_vec_r.data = dataid;
-    tmp_vec_r.pos = fs-startbit;
-    tmp_vec_r.down = pcur_r->down;
-    tmp_vec_r.right = vec_b;
-    vec_a = construct_vec_new(ppclst, &tmp_vec_r, &pvec_a);
-    if(pvec_a == NULL)
-    {
-        assert(0);
-        printf("\r\n%d\t%s", __LINE__, __FUNCTION__);
-        return 1;
-    }
-
-    pmdf_vec = malloc(sizeof(spt_md_vec_t));
-    if(pmdf_vec == NULL)
-    {
-        assert(0);
-        printf("\r\n%d\t%s", __LINE__, __FUNCTION__);
-        return 1;
-    }    
-    pmdf_vec->vec_id = pinsert->cur_vec;
-    pmdf_vec->value.data = SPT_INVALID;
-    pmdf_vec->value.down = vec_a;
-    pmdf_vec->value.right = SPT_INVALID;
     pmdf_vec->value.pos = SPT_INVALID;
     
     pmdf_vec->next = pmdf_ent->md_head;
@@ -1911,8 +1944,18 @@ insert_start:
                 if(direction == SPT_DOWN)
                 {
                     ///TODO: insert
-                    st_insert_info.pkey_vec = pcur;
-                    st_insert_info.key_val= cur_vec.val;
+                    ppre = pcur;
+                    pre_vec.val = cur_vec.val;            
+                    pcur = (spt_vec_t *)vec_id_2_ptr(*ppclst,pre_vec.rd);
+                    cur_vec = pcur->val;
+                    if(cur_vec.valid != SPT_VEC_INVALID
+                        && cur_vec.flag != SPT_VEC_FlAG_SIGNPOST
+                        && cur_vec.pos == 0)
+                    {
+                        continue;
+                    }
+                    st_insert_info.pkey_vec = ppre;
+                    st_insert_info.key_val= pre_vec.val;
                     st_insert_info.signpost = signpost;
                     return do_insert_signpost_right(ppclst, &st_insert_info, new_data);
                 }
@@ -2065,11 +2108,26 @@ insert_start:
                 if(pre_vec.flag == SPT_VEC_FlAG_SIGNPOST)
                 {
                     signpost = cur_vec.idx << SPT_VEC_SIGNPOST_BIT;
+                    if(direction == SPT_RIGHT)
+                    {
+                        pcur = (spt_vec_t *)vec_id_2_ptr(*ppclst,pre_vec.rd);
+                        cur_vec = pcur->val;
+                        if(cur_vec.valid != SPT_VEC_INVALID
+                            && cur_vec.flag != SPT_VEC_FlAG_SIGNPOST
+                            && cur_vec.pos == 0)
+                        {
+                            continue;
+                        }
+                        st_insert_info.pkey_vec = ppre;
+                        st_insert_info.key_val= pre_vec.val;
+                        st_insert_info.fs = fs_pos;
+                        st_insert_info.signpost = signpost;
+                        return do_insert_signpost_down(ppclst, &st_insert_info, new_data);
+                    }
                     if(pre_vec.rd == SPT_NULL)
                     {
-                        st_insert_info.pkey_vec= pcur;
-                        st_insert_info.key_val= cur_vec.val;
-                        st_insert_info.cmp_pos = cmpres.pos;
+                        st_insert_info.pkey_vec= ppre;
+                        st_insert_info.key_val= pre_vec.val;
                         st_insert_info.fs = fs_pos;
                         st_insert_info.signpost = signpost;
                         return do_insert_last_down(ppclst, &st_insert_info, new_data);
@@ -2083,9 +2141,8 @@ insert_start:
                 {
                     if(pre_vec.down == SPT_NULL)
                     {
-                        st_insert_info.pkey_vec= pcur;
-                        st_insert_info.key_val= cur_vec.val;
-                        st_insert_info.cmp_pos = cmpres.pos;
+                        st_insert_info.pkey_vec= ppre;
+                        st_insert_info.key_val= pre_vec.val;
                         st_insert_info.fs = fs_pos;
                         st_insert_info.signpost = signpost;
                         return do_insert_last_down(ppclst, &st_insert_info, new_data);
@@ -2134,21 +2191,29 @@ insert_start:
                     if(pre_vec.valid == SPT_VEC_INVALID)
                     {
                         /*从头再来*/
-                        return insert_data(ppclst, new_data);
+                        return SPT_DO_AGAIN;
                     }
                     /*insert last down*/
                     if(pre_vec.flag == SPT_VEC_FlAG_SIGNPOST)
                     {
                         if(pre_vec.rd == SPT_NULL)
                         {
-                            return //do_insert_last_down(ppclst, cur_vec, startbit, fs_pos, new_data);
+                            st_insert_info.pkey_vec= ppre;
+                            st_insert_info.key_val= pre_vec.val;
+                            st_insert_info.fs = fs_pos;
+                            st_insert_info.signpost = signpost;
+                            return do_insert_last_down(ppclst, &st_insert_info, new_data);
                         }
                     }
                     else
                     {
                         if(pre_vec.down == SPT_NULL)
                         {
-                            return //do_insert_last_down(ppclst, cur_vec, startbit, fs_pos, new_data);
+                            st_insert_info.pkey_vec= ppre;
+                            st_insert_info.key_val= pre_vec.val;
+                            st_insert_info.fs = fs_pos;
+                            st_insert_info.signpost = signpost;
+                            return do_insert_last_down(ppclst, &st_insert_info, new_data);
                         }
                     }
                     pcur = (spt_vec_t *)vec_id_2_ptr(*ppclst,pre_vec.down);
@@ -2165,12 +2230,10 @@ insert_start:
                 /*insert*/
                 if(fs_pos < startbit + len)
                 {
-                    st_insert_info.cur_vec = cur_vec;
-                    st_insert_info.startbit = startbit;
-                    st_insert_info.pcur_vec_r = &st_vec_r;
-                    st_insert_info.pn_vec_r = &st_down_r;
-                    st_insert_info.len = len;
+                    st_insert_info.pkey_vec= ppre;
+                    st_insert_info.key_val= pre_vec.val;
                     st_insert_info.fs = fs_pos;
+                    st_insert_info.signpost = signpost;
                     return do_insert_up_via_d(ppclst, &st_insert_info,new_data);
                 }
                 startbit += len;
