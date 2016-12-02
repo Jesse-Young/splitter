@@ -51,12 +51,12 @@ typedef struct chunk_head
 typedef struct cluster_head
 {
     unsigned int vec_head;
-    unsigned int vec_free_head;
-    unsigned int blk_free_head;
-    unsigned int dblk_free_head;
+    volatile unsigned int vec_free_head;
+    volatile unsigned int blk_free_head;
+    volatile unsigned int dblk_free_head;
 
-    unsigned int vec_buf_head;
-    unsigned int dblk_buf_head;
+    volatile unsigned int vec_buf_head;
+    volatile unsigned int dblk_buf_head;
     
     unsigned int pg_num_max;
     unsigned int pg_num_total;
@@ -75,7 +75,7 @@ typedef struct cluster_head
     unsigned int used_dblk_cnt;
     unsigned int debug;
     
-    char *pglist[0];
+    volatile char *pglist[0];
 }cluster_head_t;
 
 typedef struct block_head
@@ -208,12 +208,20 @@ typedef struct spt_seek_path
 //    spt_path_node*        next;
 }spt_path;
 #else
-typedef struct spt_seek_path
+typedef struct spt_seek_path2
 {
     int up_2_del;/*拐点*/
     int del_2_down;/*拐点*/
     int down;/*数据关系紧挨着的下一层的第一个向量*//*应该解释为和当前数据有直接向量关联关系*/ 
     int direction;
+}spt_path2;
+
+typedef struct spt_seek_path
+{
+    spt_vec *pkey_vec[3];
+    u64 key_val[3];
+    int direction[3];
+    int counter;
 }spt_path;
 
 #endif

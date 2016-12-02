@@ -93,7 +93,7 @@ char* cluster_alloc_page()
 int cluster_add_page(cluster_head_t **ppclst)
 {
     char *page, **indir_page, ***dindir_page;
-    u32 size;
+    u32 size, old_head, new_head;
     int i, total, id, pg_id, offset, offset2;
     block_head_t *blk;
     cluster_head_t *pclst = *ppclst;
@@ -104,57 +104,26 @@ int cluster_add_page(cluster_head_t **ppclst)
     u64 double_pgs = 1<<(ptrs_bit*2);
     
 
-
-    if(pclst->pg_num_max == pclst->pg_cursor)
+    pg_id = atomic_add_return(1, (atomic_t *)&pclst->pg_cursor);
+    if(pclst->pg_num_max <= pg_id)
     {
+        atomic_sub(1, (atomic_t *)&pclst->pg_cursor);
         return CLT_FULL;
     }
 
     page = cluster_alloc_page();
     if(page == NULL)
         return CLT_NOMEM;
-
-    if(pclst->pg_cursor == pclst->pg_num_total)
-    {
-        cluster_head_t *new_head;
-        size = (sizeof(char *)*pclst->pg_num_total + sizeof(cluster_head_t));
-        if(size*2 >= PG_SIZE)
-        {
-            new_head = (cluster_head_t *)cluster_alloc_page();
-            if(new_head == NULL)
-            {
-                free(page);
-                return CLT_NOMEM;
-            }
-            memcpy((char *)new_head, (char *)pclst, size);
-            new_head->pg_num_total = pclst->pg_num_max;
-        }
-        else
-        {
-            new_head = malloc(size*2);
-            if(new_head == NULL)
-            {
-                free(page);
-                return CLT_NOMEM;
-            }    
-            memcpy(new_head, pclst, size);
-            new_head->pg_num_total = (size*2-sizeof(cluster_head_t))/sizeof(char *);
-        }
-        free(pclst);
-//        new_head->pglist[0] = new_head;
-        pclst = new_head;
-        *ppclst = pclst;
-    }
-    pg_id = pclst->pg_cursor;
+  
 //    pclst->pglist[pgid] = page;
-    if(pg_id < direct_pgs)
+    id = pg_id;
+    if(id < direct_pgs)
     {
-        pclst->pglist[pg_id] = page;
+        pclst->pglist[id] = page;
     }
-    else if((pg_id -= direct_pgs) < indirect_pgs)
+    else if((id -= direct_pgs) < indirect_pgs)
     {
-        indir_page = (char **)pclst->pglist[CLST_IND_PG];
-        offset = pg_id;
+        offset = id;
         if(offset == 0)
         {
             indir_page = (char **)cluster_alloc_page();
@@ -165,14 +134,21 @@ int cluster_add_page(cluster_head_t **ppclst)
             }
             pclst->pglist[CLST_IND_PG] = (char *)indir_page;
         }
+        else
+        {
+            while(pclst->pglist[CLST_IND_PG] == 0)
+            {
+                ;
+            }                
+        }
+        indir_page = (char **)pclst->pglist[CLST_IND_PG];
         indir_page[offset] = page;
     }
-    else if((pg_id -= indirect_pgs) < double_pgs)
+    else if((id -= indirect_pgs) < double_pgs)
     {
-        dindir_page = (char ***)pclst->pglist[CLST_DIND_PG];
-        offset = pg_id >> ptrs_bit;
-        offset2 = pg_id & (ptrs-1);
-        if(pg_id == 0)
+        offset = id >> ptrs_bit;
+        offset2 = id & (ptrs-1);
+        if(id == 0)
         {
             dindir_page = (char ***)cluster_alloc_page();
             if(dindir_page == NULL)
@@ -182,7 +158,16 @@ int cluster_add_page(cluster_head_t **ppclst)
             }
             pclst->pglist[CLST_DIND_PG] = (char *)dindir_page;
         }
-        indir_page = dindir_page[offset];
+        else
+        {
+            while(pclst->pglist[CLST_DIND_PG] == 0)
+            {
+                ;
+            }
+
+        }
+        dindir_page = (char ***)pclst->pglist[CLST_DIND_PG];
+        
         if(offset2 == 0)
         {
             indir_page = (char **)cluster_alloc_page();
@@ -191,18 +176,30 @@ int cluster_add_page(cluster_head_t **ppclst)
                 printf("\r\nOUT OF MEMERY    %d\t%s", __LINE__, __FUNCTION__);
                 return CLT_NOMEM;
             }
+            else
+            {
+
+            }
             dindir_page[offset] = indir_page;
-        }        
+        }
+        else
+        {
+            while(dindir_page[offset] == 0)
+            {
+                ;
+            }
+        }
+        indir_page = dindir_page[offset];        
         indir_page[offset2] = page;
     }
     else
     {
         printf("warning: %s: id is too big", __func__);
-        return 0;
+        return CLT_ERR;
     }
     
-    id = (pclst->pg_cursor << pclst->blk_per_pg_bits);
-    pclst->pg_cursor++;
+    id = (pg_id<< pclst->blk_per_pg_bits);
+//    pclst->pg_cursor++;
     total = pclst->blk_per_pg;
     blk = (block_head_t *)page;
 
@@ -212,10 +209,16 @@ int cluster_add_page(cluster_head_t **ppclst)
         blk->next = id + i;
         blk = (block_head_t *)(page + (i << BLK_BITS));
     }
-    blk->next = pclst->blk_free_head;
-    pclst->blk_free_head = id;
+    blk->magic = 0xdeadbeef;
+    do
+    {
+        old_head = pclst->blk_free_head;
+        blk->next = old_head;
+        pclst->blk_free_head = id;
+        new_head = atomic_cmpxchg((atomic_t *)&pclst->blk_free_head, old_head, id);
+    }while(new_head != id);
 
-    pclst->free_blk_cnt += total;
+    atomic_add(total, (atomic_t *)&pclst->free_blk_cnt);
     return SPT_OK;
 }
 
@@ -231,12 +234,11 @@ cluster_head_t * cluster_init()
     u32 vec;
     spt_vec_t *pvec;
 
-
-    phead = malloc(sizeof(cluster_head_t)*2);
+    phead = cluster_alloc_page();
     if(phead == NULL)
         return 0;
 
-    memset(phead, 0, 2*sizeof(cluster_head_t));
+    memset(phead, 0, 4096);
 
     if(sizeof(char *) == 4)
     {
@@ -248,7 +250,7 @@ cluster_head_t * cluster_init()
     }
     
     phead->pg_num_max = CLST_PG_NUM_MAX;
-    phead->pg_num_total = (sizeof(cluster_head_t)>>ptr_bits);
+//    phead->pg_num_total = (sizeof(cluster_head_t)>>ptr_bits);
     phead->blk_per_pg_bits = PG_BITS - BLK_BITS;
 //    phead->db_per_pg_bits= PG_BITS - DBLK_BITS;
 //    phead->vec_per_pg_bits = PG_BITS - VBLK_BITS;
@@ -259,6 +261,10 @@ cluster_head_t * cluster_init()
     phead->vec_free_head = SPT_NULL;
     phead->blk_free_head = SPT_NULL;
     phead->dblk_free_head = SPT_NULL;
+    
+    phead->vec_buf_head = SPT_NULL;
+    phead->dblk_buf_head = SPT_NULL;
+
     phead->debug = 1;
 
     vec = vec_alloc(&phead, &pvec);
@@ -278,23 +284,30 @@ cluster_head_t * cluster_init()
 
 int blk_alloc(cluster_head_t **ppcluster, char **blk)
 {
-    int blk_id;
+    int blk_id, new_head;
     block_head_t *pblk;
     cluster_head_t *pcluster=*ppcluster;
+    int try_cnts = 0;
 
-    while((blk_id = pcluster->blk_free_head) == -1 )
+    do
     {
-        if(SPT_OK != cluster_add_page(ppcluster))
+        while((blk_id = pcluster->blk_free_head) == -1 )
         {
-            *blk = NULL;
-            return -1;
+            if(SPT_OK != cluster_add_page(ppcluster))
+            {
+                try_cnts++;
+                if(try_cnts != 0)
+                {
+                    *blk = NULL;
+                    return -1;
+                }
+            }
+            pcluster=*ppcluster;
         }
-        pcluster=*ppcluster;
-    }
-    
-    pblk = (block_head_t *)blk_id_2_ptr(pcluster,blk_id);
-    pcluster->blk_free_head = pblk->next;
-    pcluster->free_blk_cnt--;
+        pblk = (block_head_t *)blk_id_2_ptr(pcluster,blk_id);
+        new_head = pblk->next;
+    }while(new_head != atomic_cmpxchg((atomic_t *)&pcluster->blk_free_head, blk_id, new_head));
+    atomic_sub(1, (atomic_t *)&pcluster->free_blk_cnt);
     *blk = (char *)pblk;
 
     return blk_id;    
@@ -303,7 +316,7 @@ int blk_alloc(cluster_head_t **ppcluster, char **blk)
 int db_add_blk(cluster_head_t **ppcluster)
 {
     char *pblk;
-    int i, total, id, blkid;
+    int i, total, id, blkid, new_head, old_head;
     db_head_t *db;
     cluster_head_t *head;
 
@@ -322,17 +335,25 @@ int db_add_blk(cluster_head_t **ppcluster)
         db->next = id + i;
         db = (db_head_t *)(pblk + (i * DBLK_SIZE));
     }
-    db->next = head->dblk_free_head;
-    head->dblk_free_head = id;
+    db->magic = 0xdeadbeef;
 
-    head->free_dblk_cnt += total;
+    do
+    {
+        old_head = head->dblk_free_head;
+        db->next = old_head;
+        head->blk_free_head = id;
+        new_head = atomic_cmpxchg((atomic_t *)&head->dblk_free_head, old_head, id);
+    }while(new_head != id);
+
+    atomic_add(total, (atomic_t *)&head->free_dblk_cnt);
+
     return SPT_OK;
 }
 
 int vec_add_blk(cluster_head_t **ppcluster)
 {
     char *pblk;
-    int i, total, id, blkid;
+    int i, total, id, blkid, old_head, new_head;
     vec_head_t *vec;
     cluster_head_t *head;
 
@@ -351,10 +372,19 @@ int vec_add_blk(cluster_head_t **ppcluster)
         vec->next = id + i;
         vec = (vec_head_t *)(pblk + (i << VBLK_BITS));
     }
-    vec->next = head->vec_free_head;
-    head->vec_free_head = id;
+
+    vec->magic = 0xdeadbeef;
+
+    do
+    {
+        old_head = head->free_dblk_cnt;
+        vec->next = old_head;
+        head->blk_free_head = id;
+        new_head = atomic_cmpxchg((atomic_t *)&head->free_dblk_cnt, old_head, id);
+    }while(new_head != id);
+
+    atomic_add(total, (atomic_t *)&head->free_vec_cnt);
     
-    head->free_vec_cnt += total;
     return SPT_OK;
 }
 
@@ -364,37 +394,49 @@ unsigned int db_alloc(cluster_head_t **ppcluster, char **db)
     int db_id;
     db_head_t *pdb;
     cluster_head_t *pcluster=*ppcluster;
+    u32 try_cnts, new_head, old_head;
 
-    while((db_id = pcluster->dblk_free_head) == -1)
+    do
     {
-        if(SPT_OK != db_add_blk(ppcluster))
+        while((db_id = pcluster->dblk_free_head) == -1 )
         {
-            *db = NULL;
-            return -1;
+            if(SPT_OK != db_add_blk(ppcluster))
+            {
+                try_cnts++;
+                if(try_cnts != 0)
+                {
+                    *db = NULL;
+                    return -1;
+                }
+            }
+            pcluster=*ppcluster;
         }
-        pcluster=*ppcluster;
-    }
-
-    pdb = (db_head_t *)db_id_2_ptr(pcluster,db_id);
-    pcluster->dblk_free_head = pdb->next;
-    pcluster->free_dblk_cnt--;
-    pcluster->used_dblk_cnt++;
+        pdb = (db_head_t *)db_id_2_ptr(pcluster,db_id);
+        new_head = pdb->next;
+    }while(new_head != atomic_cmpxchg((atomic_t *)&pcluster->dblk_free_head, db_id, new_head));
+    atomic_sub(1, (atomic_t *)&pcluster->free_dblk_cnt);
+    atomic_add(1, (atomic_t *)&pcluster->used_dblk_cnt);
     *db = (char *)pdb;
 
-    return db_id;        
-
+    return db_id;
 }
 
 void db_free(cluster_head_t *pcluster, int id)
 {
     db_head_t *pdb;
-
+    u32 old_head;
+    
     pdb = (db_head_t *)db_id_2_ptr(pcluster,id);
-    pdb->next = pcluster->dblk_free_head;
-    pcluster->dblk_free_head = id;
+    do
+    {
+        old_head = pcluster->dblk_free_head;
+        pdb->next = old_head;
+        
+    }while(id != atomic_cmpxchg((atomic_t *)&pcluster->dblk_free_head, old_head, id));
+    
+    atomic_add(1, (atomic_t *)&pcluster->free_dblk_cnt);
+    atomic_sub(1, (atomic_t *)&pcluster->used_dblk_cnt);
 
-    pcluster->free_dblk_cnt++;
-    pcluster->used_dblk_cnt--;
     return ;
 }
 
@@ -404,64 +446,86 @@ unsigned int vec_alloc(cluster_head_t **ppcluster, spt_vec_t **vec)
     int vec_id;
     vec_head_t *pvec;
     cluster_head_t *pcluster = *ppcluster;
+    u32 try_cnts, new_head, old_head;
 
-    while((vec_id = pcluster->vec_free_head) == -1)
+    do
     {
-        if(SPT_OK != vec_add_blk(ppcluster))
+        while((vec_id = pcluster->blk_free_head) == -1 )
         {
-            *vec = NULL;
-            return -1;
+            if(SPT_OK != vec_add_blk(ppcluster))
+            {
+                try_cnts++;
+                if(try_cnts != 0)
+                {
+                    *vec = NULL;
+                    return -1;
+                }
+            }
+            pcluster=*ppcluster;
         }
-        pcluster = *ppcluster;
-    }
-
-    pvec = (vec_head_t *)vec_id_2_ptr(pcluster,vec_id);
-    pcluster->vec_free_head = pvec->next;
-    pcluster->free_vec_cnt--;
-    *vec = (spt_vec_t *)pvec;
+        pvec = (vec_head_t *)vec_id_2_ptr(pcluster,vec_id);
+        new_head = pvec->next;
+    }while(new_head != atomic_cmpxchg((atomic_t *)&pcluster->blk_free_head, vec_id, new_head));
+    atomic_sub(1, (atomic_t *)&pcluster->free_blk_cnt);
+    *vec = (char *)pvec;
     
     return vec_id;
-
 }
 
 void vec_free(cluster_head_t *pcluster, int id)
 {
     vec_head_t *pvec;
+    u32 old_head;
 
     pvec = (vec_head_t *)vec_id_2_ptr(pcluster,id);
-    pvec->next = pcluster->vec_free_head;
-    pcluster->vec_free_head = id;
-    pcluster->free_vec_cnt++;
-    return ;
-}
-
-void vec_list_free(cluster_head_t *pcluster, int id)
-{
-    spt_vec_t *pvec;
-    int next, head;
-
-    pvec = (spt_vec_t *)vec_id_2_ptr(pcluster,id);
-    head = id;
-    
-    while(spt_nlst_is_set(pvec->flag))
+    do
     {
-        next = pvec->rdn;
-        ((vec_head_t *)pvec)->next = next;
-        pvec = (spt_vec_t *)vec_id_2_ptr(pcluster,next);
-    }
+        old_head = pcluster->vec_free_head;
+        pvec->next = old_head;
+        
+    }while(id != atomic_cmpxchg((atomic_t *)&pcluster->vec_free_head, old_head, id));
+    
+    atomic_add(1, (atomic_t *)&pcluster->free_vec_cnt);
+    atomic_sub(1, (atomic_t *)&pcluster->used_vec_cnt);
 
-    ((vec_head_t *)pvec)->next = pcluster->vec_free_head;
-    pcluster->vec_free_head = head;
     return ;
 }
 
 void vec_free_to_buf(cluster_head_t *pcluster, int id)
 {
+    vec_head_t *pvec;
+    u32 old_head;
+
+    pvec = (vec_head_t *)vec_id_2_ptr(pcluster,id);
+    do
+    {
+        old_head = pcluster->vec_buf_head;
+        pvec->next = old_head;
+        
+    }while(id != atomic_cmpxchg((atomic_t *)&pcluster->vec_buf_head, old_head, id));
+///TODO:    
+    atomic_add(1, (atomic_t *)&pcluster->free_vec_cnt);
+    atomic_sub(1, (atomic_t *)&pcluster->used_vec_cnt);
+
+    return ;
 
 }
 
 void db_free_to_buf(cluster_head_t *pcluster, int id)
 {
+    db_head_t *pdb;
+    u32 old_head;
+    
+    pdb = (db_head_t *)db_id_2_ptr(pcluster,id);
+    do
+    {
+        old_head = pcluster->dblk_buf_head;
+        pdb->next = old_head;
+        
+    }while(id != atomic_cmpxchg((atomic_t *)&pcluster->dblk_buf_head, old_head, id));
+///TODO:    
+    atomic_add(1, (atomic_t *)&pcluster->free_dblk_cnt);
+    atomic_sub(1, (atomic_t *)&pcluster->used_dblk_cnt);
 
 }
 
