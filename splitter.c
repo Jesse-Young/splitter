@@ -2325,7 +2325,7 @@ find_start:
     cur_vec.val = pcur->val;
     startbit = signpost + cur_vec.pos;
     endbit = pqinfo->endbit;
-    if(cur_vec.valid == SPT_INVALID || cur_vec.flag == SPT_VEC_FlAG_SIGNPOST)
+    if(cur_vec.valid == SPT_VEC_INVALID || cur_vec.flag == SPT_VEC_FlAG_SIGNPOST)
     {
         return SPT_DO_AGAIN;
     }
@@ -2341,42 +2341,28 @@ find_start:
             if(cur_vec.flag == SPT_VEC_FLAG_DATA)
             {
                 len = endbit - startbit;
-                ppre = pcur;
-                pre_vec.val = cur_vec.val;
-                pcur = NULL;
-            }
-            else
-            {
                 //ppre = pcur;
-                //pre_vec.val = cur_vec.val;            
+                //pre_vec.val = cur_vec.val;
+                //pcur = NULL;
+            }
+            else if(cur_vec.flag == SPT_VEC_FLAG_RIGHT)
+            {
                 pnext = (spt_vec_t *)vec_id_2_ptr(*ppclst,cur_vec.rd);
-                next_vec = pnext->val;
+                next_vec.val = pnext->val;
                 if(next_vec.valid == SPT_VEC_INVALID)
                 {
                     tmp_vec.val = cur_vec.val;
                     vecid = cur_vec.rd;
+                    tmp_vec.rd = next_vec.rd;
                     if(next_vec.flag == SPT_VEC_FlAG_SIGNPOST)
                     {
-                        if(direction == SPT_DOWN)
-                        {
-                            tmp_vec.down = next_vec.rd;
-                            vecid = cur_vec.down;
-                        }
-                        else
-                        {
-                            if(next_vec.ext_sys_flg == SPT_VEC_SYS_FLAG_DATA)
-                            {
-                                spt_set_data_flag(tmp_vec);
-                            }
-                            tmp_vec.rd = next_vec.rd;
-                        }
+                        tmp_vec.flag = next_vec.ext_sys_flg;
                     }
                     else if(next_vec.flag == SPT_VEC_FLAG_DATA)
                     {
                         if(next_vec.down == SPT_NULL)
                         {
                             spt_set_data_flag(tmp_vec);
-                            tmp_vec.rd = next_vec.rd;
                         }
                         else
                         {
@@ -2386,7 +2372,7 @@ find_start:
                     }
                     else
                     {
-                        tmp_vec.rd = next_vec.rd;
+                        ;
                     }
                     cur_vec.val = atomic64_cmpxchg((atomic64_t *)pcur, cur_vec.val, tmp_vec.val);
                     if(cur_vec.val == tmp_vec.val)//delete succ
@@ -2402,44 +2388,126 @@ find_start:
                             goto find_start;
                         }
                         continue;
-                    }
+                    }                    
                 }
-                /*next必然valid*/
-                if(cur_vec.flag == SPT_VEC_FlAG_SIGNPOST)
-                {   
-                    //对于一个路标结点:
-                        //next为路标，是不合理结构(方向是右或下，处理一致)。
-                    if(next_vec.flag == SPT_VEC_FlAG_SIGNPOST)
+                
+                //对于一个向量的右结点:
+                    //如果是路标，不能是SPT_VEC_SYS_FLAG_DATA
+                    //如果是向量，必然有down
+                if(next_vec.flag == SPT_VEC_FlAG_SIGNPOST)
+                {
+                    if(next_vec.ext_sys_flg == SPT_VEC_SYS_FLAG_DATA)
+                    {
+                        tmp_vec.val = next_vec.val;
+                        tmp_vec.valid = SPT_VEC_INVALID;
+                        atomic64_cmpxchg((atomic64_t *)pcur, next_vec.val, tmp_vec.val);
+                        //set invalid succ or not, refind from cur
+                        cur_vec.val = pcur->val;
+                        if((cur_vec.valid == SPT_VEC_INVALID))
+                        {
+                            pcur = ppre;
+                            goto find_start;
+                        }
+                        continue;
+                    }
+                    len = (next_vec.idx << SPT_VEC_SIGNPOST_BIT ) - startbit + 1;
+                }
+                else
+                {
+                    if(next_vec.down == SPT_NULL)
+                    {
+                        tmp_vec.val = next_vec.val;
+                        tmp_vec.valid = SPT_VEC_INVALID;
+                        atomic64_cmpxchg((atomic64_t *)pcur, next_vec.val, tmp_vec.val);
+                        //set invalid succ or not, refind from cur
+                        cur_vec.val = pcur->val;
+                        if((cur_vec.valid == SPT_VEC_INVALID))
+                        {
+                            pcur = ppre;
+                            goto find_start;
+                        }
+                        continue;
+                    }
+                    len = next_vec.pos + signpost - startbit + 1;
+                }
+            }
+            //cur是路标
+            else
+            {
+                //pnext = (spt_vec_t *)vec_id_2_ptr(*ppclst,cur_vec.rd);
+                //next_vec.val = pnext->val;
+                //起始结点不允许是路标，因此方向只有RIGHT和DOWN
+                if(direction == SPT_RIGHT)
+                {
+                    if(cur_vec.ext_sys_flg == SPT_VEC_SYS_FLAG_DATA)
                     {
                         tmp_vec.val = cur_vec.val;
-                        tmp_vec.valid = SPT_INVALID;
+                        tmp_vec.valid = SPT_VEC_INVALID;
                         cur_vec.val = atomic64_cmpxchg((atomic64_t *)pcur, cur_vec.val, tmp_vec.val);
                         /*set invalid succ or not, refind from ppre*/
                         pcur = ppre;
                         goto find_start;
                     }
-                    //到这里next肯定为向量
-                    if(direction == SPT_DOWN)
+                    pnext = (spt_vec_t *)vec_id_2_ptr(*ppclst,cur_vec.rd);
+                    next_vec.val = pnext->val;
+                    if(next_vec.valid == SPT_VEC_INVALID)
                     {
-                        if(next_vec.pos == 0)
+                        tmp_vec.val = cur_vec.val;
+                        vecid = cur_vec.rd;
+                        tmp_vec.rd = next_vec.rd;
+                        if(next_vec.flag == SPT_VEC_FlAG_SIGNPOST)
                         {
-                            ppre = pcur;
-                            //pre_vec.val = cur_vec.val;
-                            pcur = pnext;
-                            cur_vec.val = next_vec.val;
-                            direction = SPT_DOWN;
-                            //signpost赋值以后，不能再从pre重查了。
-                            signpost = cur_vec.idx << SPT_VEC_SIGNPOST_BIT;                            
+                            tmp_vec.ext_sys_flg = next_vec.ext_sys_flg;
+                        }
+                        else if(next_vec.flag == SPT_VEC_FLAG_DATA)
+                        {
+                            if(next_vec.down == SPT_NULL)
+                            {
+                                tmp_vec.ext_sys_flg == SPT_VEC_SYS_FLAG_DATA;
+                            }
+                            else
+                            {
+                                tmp_vec.rd = next_vec.down;
+                                cur_data = -1;
+                            }                
+                        }
+                        else
+                        {
+                            ;
+                        }
+                        cur_vec.val = atomic64_cmpxchg((atomic64_t *)pcur, cur_vec.val, tmp_vec.val);
+                        if(cur_vec.val == tmp_vec.val)//delete succ
+                        {
+                            vec_free_to_buf(*ppclst, vecid);
                             continue;
                         }
-                        return -1;
+                        else//delete fail
+                        {
+                            if(cur_vec.valid == SPT_VEC_INVALID)
+                            {
+                                pcur = ppre;
+                                goto find_start;
+                            }
+                            continue;
+                        }                    
+                    }
+                    //对于一个路标结点:
+                        //next为路标，是不合理结构。
+                    if(next_vec.flag == SPT_VEC_FlAG_SIGNPOST)
+                    {
+                        tmp_vec.val = cur_vec.val;
+                        tmp_vec.valid = SPT_VEC_INVALID;
+                        cur_vec.val = atomic64_cmpxchg((atomic64_t *)pcur, cur_vec.val, tmp_vec.val);
+                        /*set invalid succ or not, refind from ppre*/
+                        pcur = ppre;
+                        goto find_start;
                     }
                     else
                     {
                         if(next_vec.down == SPT_NULL)
                         {
                             tmp_vec.val = next_vec.val;
-                            tmp_vec.valid = SPT_INVALID;
+                            tmp_vec.valid = SPT_VEC_INVALID;
                             atomic64_cmpxchg((atomic64_t *)pcur, next_vec.val, tmp_vec.val);
                             //set invalid succ or not, refind from cur
                             cur_vec.val = pcur->val;
@@ -2451,60 +2519,76 @@ find_start:
                             continue;
                         }
                         //signpost赋值以后，不能再从pre重查了。
-                        signpost = cur_vec.idx << SPT_VEC_SIGNPOST_BIT;                                                    
+                        signpost = cur_vec.idx << SPT_VEC_SIGNPOST_BIT;                        
+                        len = next_vec.pos + signpost - startbit + 1;
                     }
                 }
-                //SPT_VEC_FLAG_DATA&SPT_VEC_FlAG_SIGNPOST前面已经处理，因此:
-                    //cur必然是SPT_VEC_FLAG_RIGHT
-                    //next必然是右结点，可能是路标、普通向量、尾向量。
-                //对于一个右结点:
-                    //如果是路标，不能是SPT_VEC_SYS_FLAG_DATA
-                    //如果是向量，必然有down
-                else 
+                else //direction = down
                 {
-                    if(next_vec.flag == SPT_VEC_FlAG_SIGNPOST)
+                    if(cur_vec.rd == SPT_NULL)
                     {
-                        if(next_vec.ext_sys_flg == SPT_VEC_SYS_FLAG_DATA)
+                        tmp_vec.val = cur_vec.val;
+                        tmp_vec.valid = SPT_VEC_INVALID;
+                        cur_vec.val = atomic64_cmpxchg((atomic64_t *)pcur, cur_vec.val, tmp_vec.val);
+                        /*set invalid succ or not, refind from ppre*/
+                        pcur = ppre;
+                        goto find_start;
+                    }
+                    pnext = (spt_vec_t *)vec_id_2_ptr(*ppclst,cur_vec.rd);
+                    next_vec.val = pnext->val;                
+                    if(next_vec.valid == SPT_VEC_INVALID)
+                    {
+                        tmp_vec.val = cur_vec.val;
+                        vecid = cur_vec.rd;
+                        if(next_vec.flag == SPT_VEC_FlAG_SIGNPOST)
                         {
-                            tmp_vec.val = next_vec.val;
-                            tmp_vec.valid = SPT_INVALID;
-                            atomic64_cmpxchg((atomic64_t *)pcur, next_vec.val, tmp_vec.val);
-                            //set invalid succ or not, refind from cur
-                            cur_vec.val = pcur->val;
-                            if((cur_vec.valid == SPT_VEC_INVALID))
+                            tmp_vec.rd = next_vec.rd;
+                        }
+                        else
+                        {
+                            tmp_vec.rd = next_vec.down;
+                        }
+                        cur_vec.val = atomic64_cmpxchg((atomic64_t *)pcur, cur_vec.val, tmp_vec.val);
+                        if(cur_vec.val == tmp_vec.val)//delete succ
+                        {
+                            vec_free_to_buf(*ppclst, vecid);
+                            continue;
+                        }
+                        else//delete fail
+                        {
+                            if(cur_vec.valid == SPT_VEC_INVALID)
                             {
                                 pcur = ppre;
                                 goto find_start;
                             }
                             continue;
                         }
-                        len = (next_vec.idx << SPT_VEC_SIGNPOST_BIT ) - startbit + 1;
+                    }
+                    //只处理应该遍历的路径
+                    if(next_vec.flag != SPT_VEC_FlAG_SIGNPOST && next_vec.pos == 0)
+                    {
+                        ppre = pcur;
+                        //pre_vec.val = cur_vec.val;
+                        pcur = pnext;
+                        cur_vec.val = next_vec.val;
+                        direction = SPT_DOWN;
+                        //signpost赋值以后，不能再从pre重查了。
+                        signpost = cur_vec.idx << SPT_VEC_SIGNPOST_BIT;                            
+                        continue;
                     }
                     else
                     {
-                        if(next_vec.down == SPT_NULL)
-                        {
-                            tmp_vec.val = next_vec.val;
-                            tmp_vec.valid = SPT_INVALID;
-                            atomic64_cmpxchg((atomic64_t *)pcur, next_vec.val, tmp_vec.val);
-                            //set invalid succ or not, refind from cur
-                            cur_vec.val = pcur->val;
-                            if((cur_vec.valid == SPT_VEC_INVALID))
-                            {
-                                pcur = ppre;
-                                goto find_start;
-                            }
-                            continue;
-                        }
-                        len = cur_vec.pos + signpost - startbit + 1;
+                        return -1;
                     }
                 }
             }
+
             if(cur_data == -1)//yzx
             {
                 cur_data = get_data_id(*ppclst, pcur);
                 pcur_data = db_id_2_ptr(*ppclst, cur_data);
-            }            
+            }
+            
             ret = diff_identify(pdata, pcur_data, startbit, len, &cmpres);
             if(ret == 0)
             {
@@ -2514,6 +2598,10 @@ find_start:
                 {
                     break;
                 }
+                ppre = pcur;
+                pcur = pnext;
+                cur_vec.val = next_vec.val;
+                direction = SPT_RIGHT;
                 ///TODO:startbit already >= DATA_BIT_MAX
                 fs_pos = find_fs(pdata, startbit, endbit - startbit);
                 continue;
@@ -2532,151 +2620,228 @@ find_start:
         else
         {
             cur_data = -1;
-            
             while(fs_pos > startbit)
             {
-                ppre = pcur;
-                pre_vec.val = cur_vec.val;
-                if(pre_vec.flag == SPT_VEC_FlAG_SIGNPOST)
+                //先删除invalid，但cur是路标还是向量，取next的方法不一致，故需要先区分
+                if(cur_vec.flag != SPT_VEC_FlAG_SIGNPOST)
                 {
-                    signpost = cur_vec.idx << SPT_VEC_SIGNPOST_BIT;
-                    if(direction == SPT_RIGHT)
+                    if(cur_vec.down == SPT_NULL)
                     {
-                        pcur = (spt_vec_t *)vec_id_2_ptr(*ppclst,pre_vec.rd);
-                        cur_vec = pcur->val;
-                        if(cur_vec.valid != SPT_VEC_INVALID
-                            && cur_vec.flag != SPT_VEC_FlAG_SIGNPOST
-                            && cur_vec.pos == 0)
+                        if(direction == SPT_RIGHT)
                         {
+                            tmp_vec.val = cur_vec.val;
+                            tmp_vec.valid = SPT_VEC_INVALID;
+                            cur_vec.val = atomic64_cmpxchg((atomic64_t *)pcur, cur_vec.val, tmp_vec.val);
+                            /*set invalid succ or not, refind from ppre*/
+                            pcur = ppre;
+                            goto find_start;
+                        }
+                        return -1;
+                    }
+                    pnext = (spt_vec_t *)vec_id_2_ptr(*ppclst,cur_vec.down);
+                    next_vec.val = pnext->val;
+                    if(next_vec.valid == SPT_VEC_INVALID)
+                    {
+                        tmp_vec.val = cur_vec.val;
+                        vecid = cur_vec.down;
+                        if(next_vec.flag == SPT_VEC_FlAG_SIGNPOST)
+                        {
+                            tmp_vec.down = next_vec.rd;
+                        }
+                        else
+                        {
+                            tmp_vec.down = next_vec.down;
+                        }
+                        cur_vec.val = atomic64_cmpxchg((atomic64_t *)pcur, cur_vec.val, tmp_vec.val);
+                        if(cur_vec.val == tmp_vec.val)//delete succ
+                        {
+                            vec_free_to_buf(*ppclst, vecid);
                             continue;
                         }
-                        return -1;
+                        else//delete fail
+                        {
+                            if(cur_vec.valid == SPT_VEC_INVALID)
+                            {
+                                pcur = ppre;
+                                goto find_start;
+                            }
+                            continue;
+                        }
                     }
-                    if(pre_vec.rd == SPT_NULL)
+                    //对于一个向量，下结点为尾路标是不合法的。
+                    if(next_vec.flag == SPT_VEC_FlAG_SIGNPOST)
                     {
-                        return -1;
+                        if(next_vec.rd = SPT_NULL)
+                        {
+                            tmp_vec.val = next_vec.val;
+                            tmp_vec.valid = SPT_VEC_INVALID;
+                            atomic64_cmpxchg((atomic64_t *)pcur, next_vec.val, tmp_vec.val);
+                            //set invalid succ or not, refind from cur
+                            cur_vec.val = pcur->val;
+                            if((cur_vec.valid == SPT_VEC_INVALID))
+                            {
+                                pcur = ppre;
+                                goto find_start;
+                            }
+                            continue;
+                        }
+                        len = (next_vec.idx << SPT_VEC_SIGNPOST_BIT ) - startbit + 1;
                     }
                     else
                     {
-                        pcur = (spt_vec_t *)vec_id_2_ptr(*ppclst,pre_vec.rd);
+                        len = next_vec.pos + signpost - startbit + 1;
                     }
+                    direction = SPT_DOWN;
                 }
-                else
-                {
-                    if(pre_vec.down == SPT_NULL)
+                else//SIGN_POST
+                {               
+                    if(direction == SPT_RIGHT)
                     {
-                        return -1;
-                    }
-                    else
-                    {
-                        seek_path.pkey_vec[1] = seek_path.pkey_vec[0];
-                        seek_path.signpost[1] = seek_path.signpost[0];
-                        seek_path.pkey_vec[0] = ppre;
-                        seek_path.signpost[0] = signpost;
-                        
-                        pcur = (spt_vec_t *)vec_id_2_ptr(*ppclst,pre_vec.down);
-                    }
-                }
-                cur_vec = pcur->val;
-            //    direction = SPT_DOWN;
-                while(cur_vec.valid == SPT_VEC_INVALID)
-                {
-                    tmp_vec.val = pre_vec.val;
-                    /*一定是从down遍历过来的*/
-                    if(pre_vec.flag == SPT_VEC_FlAG_SIGNPOST)
-                    {
-                        if(cur_vec.flag == SPT_VEC_FlAG_SIGNPOST)
+                        if(cur_vec.ext_sys_flg == SPT_VEC_SYS_FLAG_DATA)
                         {
-                            tmp_vec.rd = cur_vec.rd;
+                            tmp_vec.val = cur_vec.val;
+                            tmp_vec.valid = SPT_VEC_INVALID;
+                            cur_vec.val = atomic64_cmpxchg((atomic64_t *)pcur, cur_vec.val, tmp_vec.val);
+                            /*set invalid succ or not, refind from ppre*/
+                            pcur = ppre;
+                            goto find_start;
+                        }
+                        pnext = (spt_vec_t *)vec_id_2_ptr(*ppclst,cur_vec.rd);
+                        next_vec.val = pnext->val;
+                        if(next_vec.valid == SPT_VEC_INVALID)
+                        {
+                            tmp_vec.val = cur_vec.val;
+                            vecid = cur_vec.rd;
+                            tmp_vec.rd = next_vec.rd;
+                            if(next_vec.flag == SPT_VEC_FlAG_SIGNPOST)
+                            {
+                                tmp_vec.ext_sys_flg = next_vec.ext_sys_flg;
+                            }
+                            else if(next_vec.flag == SPT_VEC_FLAG_DATA)
+                            {
+                                if(next_vec.down == SPT_NULL)
+                                {
+                                    tmp_vec.ext_sys_flg == SPT_VEC_SYS_FLAG_DATA;
+                                }
+                                else
+                                {
+                                    tmp_vec.rd = next_vec.down;
+                                    cur_data = -1;
+                                }                
+                            }
+                            else
+                            {
+                                ;
+                            }
+                            cur_vec.val = atomic64_cmpxchg((atomic64_t *)pcur, cur_vec.val, tmp_vec.val);
+                            if(cur_vec.val == tmp_vec.val)//delete succ
+                            {
+                                vec_free_to_buf(*ppclst, vecid);
+                                continue;
+                            }
+                            else//delete fail
+                            {
+                                if(cur_vec.valid == SPT_VEC_INVALID)
+                                {
+                                    pcur = ppre;
+                                    goto find_start;
+                                }
+                                continue;
+                            }                    
+                        }
+
+                        //只处理pos为0的右向量
+                        if(next_vec.flag != SPT_VEC_FlAG_SIGNPOST 
+                            && next_vec.pos == 0)
+                        {
+                            ppre = pcur;
+                            //pre_vec.val = cur_vec.val;
+                            pcur = pnext;
+                            cur_vec.val = next_vec.val;
+                            //direction = SPT_DOWN;
+                            //signpost赋值以后，不能再从pre重查了。
+                            signpost = cur_vec.idx << SPT_VEC_SIGNPOST_BIT;                            
+                            continue;
                         }
                         else
-                        {
-                            tmp_vec.rd = cur_vec.down;
-                        }
-                        vecid_cur = pre_vec.rd;
-                    }
-                    else
-                    {
-                        if(cur_vec.flag == SPT_VEC_FlAG_SIGNPOST)
-                        {
-                            tmp_vec.down = cur_vec.rd;
-                        }
-                        else
-                        {
-                            tmp_vec.down = cur_vec.down;
-                        }
-                        vecid_cur = pre_vec.down;
-                    }
-                    pre_vec.val = atomic64_cmpxchg((atomic64_t *)ppre, pre_vec.val, tmp_vec.val);
-                    if(pre_vec.val == tmp_vec.val)//delete succ
-                    {
-                        vec_free_to_buf(*ppclst, vecid_cur);
-                    }                    
-                    /*不论交换成功与否，直接拿新的pre_vec进行判断和处理*/
-                    if(pre_vec.valid == SPT_VEC_INVALID)
-                    {
-                        pcur =  seek_path.pkey_vec[1];
-                        signpost = seek_path.signpost[1];
-                        seek_path.pkey_vec[1] = 0;
-                        seek_path.signpost[1] = 0;
-                        seek_path.pkey_vec[0] = 0;
-                        seek_path.signpost[0] = 0;
-                        cur_vec.val = pcur->val;
-                        if(cur_vec.valid == SPT_VEC_INVALID)
-                        {
-                            return SPT_DO_AGAIN;
-                        }
-                        else
-                        {
-                            startbit = signpost + cur_vec.pos;
-                            goto delete_start;
-                        }
-                    }
-                    /*insert last down*/
-                    if(pre_vec.flag == SPT_VEC_FlAG_SIGNPOST)
-                    {
-                        if(pre_vec.rd == SPT_NULL)
                         {
                             return -1;
                         }
                     }
-                    else
+                    else//DOWN
                     {
-                        if(pre_vec.down == SPT_NULL)
+                        if(cur_vec.rd == SPT_NULL)
                         {
-                            return -1;
+                            tmp_vec.val = cur_vec.val;
+                            tmp_vec.valid = SPT_VEC_INVALID;
+                            cur_vec.val = atomic64_cmpxchg((atomic64_t *)pcur, cur_vec.val, tmp_vec.val);
+                            /*set invalid succ or not, refind from ppre*/
+                            pcur = ppre;
+                            goto find_start;
+                        }
+                        pnext = (spt_vec_t *)vec_id_2_ptr(*ppclst,cur_vec.rd);
+                        next_vec.val = pnext->val;                        
+                        if(next_vec.valid == SPT_VEC_INVALID)
+                        {
+                            tmp_vec.val = cur_vec.val;
+                            vecid = cur_vec.rd;
+                            if(next_vec.flag == SPT_VEC_FlAG_SIGNPOST)
+                            {
+                                tmp_vec.rd = next_vec.rd;
+                            }
+                            else
+                            {
+                                tmp_vec.rd = next_vec.down;
+                            }
+                            cur_vec.val = atomic64_cmpxchg((atomic64_t *)pcur, cur_vec.val, tmp_vec.val);
+                            if(cur_vec.val == tmp_vec.val)//delete succ
+                            {
+                                vec_free_to_buf(*ppclst, vecid);
+                                continue;
+                            }
+                            else//delete fail
+                            {
+                                if(cur_vec.valid == SPT_VEC_INVALID)
+                                {
+                                    pcur = ppre;
+                                    goto find_start;
+                                }
+                                continue;
+                            }
+                        }
+                        //对于一个路标结点:
+                            //next为路标，是不合理结构。
+                        if(next_vec.flag == SPT_VEC_FlAG_SIGNPOST)
+                        {
+                            tmp_vec.val = cur_vec.val;
+                            tmp_vec.valid = SPT_VEC_INVALID;
+                            cur_vec.val = atomic64_cmpxchg((atomic64_t *)pcur, cur_vec.val, tmp_vec.val);
+                            /*set invalid succ or not, refind from ppre*/
+                            pcur = ppre;
+                            goto find_start;
+                        }
+                        else
+                        {
+                            //signpost赋值以后，不能再从pre重查了。
+                            signpost = cur_vec.idx << SPT_VEC_SIGNPOST_BIT;
+                            len = next_vec.pos + signpost - startbit + 1;
                         }
                     }
-                    pcur = (spt_vec_t *)vec_id_2_ptr(*ppclst,pre_vec.down);
-                    cur_vec = pcur->val;
-                }
-                if(cur_vec.flag == SPT_VEC_FlAG_SIGNPOST)
-                {
-                    len = (cur_vec.idx << SPT_VEC_SIGNPOST_BIT ) - startbit + 1;
-                }
-                else
-                {
-                    len = cur_vec.pos + signpost - startbit + 1;
                 }
                 /*insert*/
                 if(fs_pos < startbit + len)
                 {
                     return -1;
                 }
-                if(pre_vec.flag != SPT_VEC_FlAG_SIGNPOST && direction == SPT_DOWN)
-                {
-                    counter = seek_path.counter = 0;
-                }
-                else
-                {
-                    counter = seek_path.counter++;
-                }
-                seek_path.direction[counter] = direction;
-                seek_path.pkey_vec[counter] = ppre;
-                seek_path.key_val[counter] = pre_vec.val;
-                direction = SPT_DOWN;
-                
                 startbit += len;
+                /*find the same record*/
+                if(startbit >= endbit)
+                {
+                    break;
+                }
+                ppre = pcur;
+                pcur = pnext;
+                cur_vec.val = next_vec.val;                
             }
             assert(fs_pos == startbit);
         }
