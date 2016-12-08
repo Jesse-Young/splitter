@@ -10,8 +10,9 @@
 #define SPT_NULL         (-1)
 #define SPT_INVALID        (-2)
 
-#define SPT_RIGHT        0
-#define SPT_DOWN         1
+#define SPT_DIR_START        0
+#define SPT_RIGHT        1
+#define SPT_DOWN         2
 
 /*为计算效率，blk大小为2的整数次幂*/
 #define CLST_PG_NUM_MAX ((1<<14) ) /*cluster max = 64m*/
@@ -35,6 +36,12 @@
 
 
 //#define CLST_TIND_PGS        (CLST_DIND_PGS+1)
+
+#define spt_debug(f, a...)	{ \
+					printf ("LFORD DEBUG (%s, %d): %s:", \
+						__FILE__, __LINE__, __func__); \
+				  	printf (f, ## a); \
+					}
 
 #if 0 //for test
 static inline char* blk_id_2_ptr(cluster_head_t *pclst, unsigned int id)

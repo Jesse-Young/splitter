@@ -146,6 +146,14 @@ typedef struct vec_cmpret
     u32 finish;
 }vec_cmpret_t;
 
+typedef struct spt_query_info
+{
+    spt_vec *start_vec;
+    u64 signpost;
+    char *data;
+    u64 endbit;
+}query_info_t;
+
 
 typedef struct spt_insert_info
 {
@@ -218,10 +226,9 @@ typedef struct spt_seek_path2
 
 typedef struct spt_seek_path
 {
-    spt_vec *pkey_vec[3];
-    u64 key_val[3];
-    int direction[3];
-    int counter;
+    spt_vec *pkey_vec[2];
+//    u64 key_val[2];
+    u64 signpost[2];
 }spt_path;
 
 #endif
