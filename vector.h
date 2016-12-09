@@ -152,6 +152,7 @@ typedef struct spt_query_info
     u64 signpost;
     char *data;
     u64 endbit;
+    u8  op;
 }query_info_t;
 
 

@@ -14,6 +14,11 @@
 #define SPT_RIGHT        1
 #define SPT_DOWN         2
 
+#define SPT_OP_FIND     1
+#define SPT_OP_DELETE   2
+#define SPT_OP_INSERT   3
+
+
 /*为计算效率，blk大小为2的整数次幂*/
 #define CLST_PG_NUM_MAX ((1<<14) ) /*cluster max = 64m*/
 //#define CHUNK_SIZE (1<<16)    /*瀛楄妭*/

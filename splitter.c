@@ -2302,7 +2302,7 @@ delete_start:
 /*ret:1查询不到；0删除成功；-1错误*/
 int find_data(cluster_head_t **ppclst, query_info_t *pqinfo)
 {
-    u32 cur_data, vecid, counter;
+    u32 cur_data, vecid;
     spt_vec_t *pcur, *pnext, *ppre;
     spt_vec_t tmp_vec, cur_vec, pre_vec, next_vec;
     char *pcur_data;//*ppre_data,
@@ -2315,19 +2315,27 @@ int find_data(cluster_head_t **ppclst, query_info_t *pqinfo)
     spt_path seek_path = {0};
     char *pdata;
 
+refind_start:
     pdata = pqinfo->data;
     signpost = pqinfo->signpost;
     cur_data = SPT_INVALID;
     pcur = pqinfo->start_vec;
 
-find_start:
+refind_forward:
     ppre = NULL;
     cur_vec.val = pcur->val;
     startbit = signpost + cur_vec.pos;
     endbit = pqinfo->endbit;
     if(cur_vec.valid == SPT_VEC_INVALID || cur_vec.flag == SPT_VEC_FlAG_SIGNPOST)
     {
-        return SPT_DO_AGAIN;
+        if(pcur == pqinfo->start_vec)
+        {
+            return SPT_DO_AGAIN;
+        }
+        else
+        {
+            goto refind_start;
+        }
     }
     direction = SPT_DIR_START;
 
@@ -2385,7 +2393,7 @@ find_start:
                         if(cur_vec.valid == SPT_VEC_INVALID)
                         {
                             pcur = ppre;
-                            goto find_start;
+                            goto refind_forward;
                         }
                         continue;
                     }                    
@@ -2406,7 +2414,7 @@ find_start:
                         if((cur_vec.valid == SPT_VEC_INVALID))
                         {
                             pcur = ppre;
-                            goto find_start;
+                            goto refind_forward;
                         }
                         continue;
                     }
@@ -2424,7 +2432,7 @@ find_start:
                         if((cur_vec.valid == SPT_VEC_INVALID))
                         {
                             pcur = ppre;
-                            goto find_start;
+                            goto refind_forward;
                         }
                         continue;
                     }
@@ -2446,7 +2454,7 @@ find_start:
                         cur_vec.val = atomic64_cmpxchg((atomic64_t *)pcur, cur_vec.val, tmp_vec.val);
                         /*set invalid succ or not, refind from ppre*/
                         pcur = ppre;
-                        goto find_start;
+                        goto refind_forward;
                     }
                     pnext = (spt_vec_t *)vec_id_2_ptr(*ppclst,cur_vec.rd);
                     next_vec.val = pnext->val;
@@ -2486,7 +2494,7 @@ find_start:
                             if(cur_vec.valid == SPT_VEC_INVALID)
                             {
                                 pcur = ppre;
-                                goto find_start;
+                                goto refind_forward;
                             }
                             continue;
                         }                    
@@ -2500,7 +2508,7 @@ find_start:
                         cur_vec.val = atomic64_cmpxchg((atomic64_t *)pcur, cur_vec.val, tmp_vec.val);
                         /*set invalid succ or not, refind from ppre*/
                         pcur = ppre;
-                        goto find_start;
+                        goto refind_forward;
                     }
                     else
                     {
@@ -2514,7 +2522,7 @@ find_start:
                             if((cur_vec.valid == SPT_VEC_INVALID))
                             {
                                 pcur = ppre;
-                                goto find_start;
+                                goto refind_forward;
                             }
                             continue;
                         }
@@ -2532,7 +2540,7 @@ find_start:
                         cur_vec.val = atomic64_cmpxchg((atomic64_t *)pcur, cur_vec.val, tmp_vec.val);
                         /*set invalid succ or not, refind from ppre*/
                         pcur = ppre;
-                        goto find_start;
+                        goto refind_forward;
                     }
                     pnext = (spt_vec_t *)vec_id_2_ptr(*ppclst,cur_vec.rd);
                     next_vec.val = pnext->val;                
@@ -2559,7 +2567,7 @@ find_start:
                             if(cur_vec.valid == SPT_VEC_INVALID)
                             {
                                 pcur = ppre;
-                                goto find_start;
+                                goto refind_forward;
                             }
                             continue;
                         }
@@ -2578,7 +2586,20 @@ find_start:
                     }
                     else
                     {
-                        return -1;
+                        switch(pqinfo->op){
+                        case SPT_OP_FIND:
+                            break;
+                        case SPT_OP_INSERT:
+                            st_insert_info.pkey_vec = pcur;
+                            st_insert_info.key_val= cur_vec.val;
+                            //st_insert_info.signpost = signpost;
+                            return do_insert_signpost_right(ppclst, &st_insert_info, pdata);
+                            break;
+                        case SPT_OP_DELETE:
+                            break;
+                        default:
+                            break;
+                        }
                     }
                 }
             }
@@ -2609,12 +2630,42 @@ find_start:
             /*insert up*/
             else if(ret > 0)
             {
-                return -1;
+                switch(pqinfo->op){
+                case SPT_OP_FIND:
+                    break;
+                case SPT_OP_INSERT:
+                    st_insert_info.pkey_vec= pcur;
+                    st_insert_info.key_val= cur_vec.val;
+                    st_insert_info.cmp_pos = cmpres.pos;
+                    st_insert_info.fs = cmpres.smallfs;
+                    st_insert_info.signpost = signpost;
+                    return do_insert_up_via_r(ppclst, &st_insert_info, pdata);                    
+                    break;
+                case SPT_OP_DELETE:
+                    break;
+                default:
+                    break;
+                }
             }
             /*insert down*/
             else
             {
-                return -1;
+                switch(pqinfo->op){
+                case SPT_OP_FIND:
+                    break;
+                case SPT_OP_INSERT:
+                    st_insert_info.pkey_vec= pcur;
+                    st_insert_info.key_val= cur_vec.val;
+                    st_insert_info.cmp_pos = cmpres.pos;
+                    st_insert_info.fs = cmpres.smallfs;
+                    st_insert_info.signpost = signpost;
+                    return do_insert_down_via_r(ppclst, &st_insert_info, pdata);                    
+                    break;
+                case SPT_OP_DELETE:
+                    break;
+                default:
+                    break;
+                }
             }        
         }
         else
@@ -2634,9 +2685,23 @@ find_start:
                             cur_vec.val = atomic64_cmpxchg((atomic64_t *)pcur, cur_vec.val, tmp_vec.val);
                             /*set invalid succ or not, refind from ppre*/
                             pcur = ppre;
-                            goto find_start;
+                            goto refind_forward;
                         }
-                        return -1;
+                        switch(pqinfo->op){
+                        case SPT_OP_FIND:
+                            break;
+                        case SPT_OP_INSERT:
+                            st_insert_info.pkey_vec= pcur;
+                            st_insert_info.key_val= cur_vec.val;
+                            st_insert_info.fs = fs_pos;
+                            st_insert_info.signpost = signpost;
+                            return do_insert_last_down(ppclst, &st_insert_info, pdata);                            
+                            break;
+                        case SPT_OP_DELETE:
+                            break;
+                        default:
+                            break;
+                        }
                     }
                     pnext = (spt_vec_t *)vec_id_2_ptr(*ppclst,cur_vec.down);
                     next_vec.val = pnext->val;
@@ -2663,7 +2728,7 @@ find_start:
                             if(cur_vec.valid == SPT_VEC_INVALID)
                             {
                                 pcur = ppre;
-                                goto find_start;
+                                goto refind_forward;
                             }
                             continue;
                         }
@@ -2681,7 +2746,7 @@ find_start:
                             if((cur_vec.valid == SPT_VEC_INVALID))
                             {
                                 pcur = ppre;
-                                goto find_start;
+                                goto refind_forward;
                             }
                             continue;
                         }
@@ -2704,7 +2769,7 @@ find_start:
                             cur_vec.val = atomic64_cmpxchg((atomic64_t *)pcur, cur_vec.val, tmp_vec.val);
                             /*set invalid succ or not, refind from ppre*/
                             pcur = ppre;
-                            goto find_start;
+                            goto refind_forward;
                         }
                         pnext = (spt_vec_t *)vec_id_2_ptr(*ppclst,cur_vec.rd);
                         next_vec.val = pnext->val;
@@ -2744,7 +2809,7 @@ find_start:
                                 if(cur_vec.valid == SPT_VEC_INVALID)
                                 {
                                     pcur = ppre;
-                                    goto find_start;
+                                    goto refind_forward;
                                 }
                                 continue;
                             }                    
@@ -2765,7 +2830,22 @@ find_start:
                         }
                         else
                         {
-                            return -1;
+                            switch(pqinfo->op){
+                            case SPT_OP_FIND:
+                                break;
+                            case SPT_OP_INSERT:
+                                signpost = cur_vec.idx << SPT_VEC_SIGNPOST_BIT;
+                                st_insert_info.pkey_vec = pcur;
+                                st_insert_info.key_val= cur_vec.val;
+                                st_insert_info.fs = fs_pos;
+                                st_insert_info.signpost = signpost;
+                                return do_insert_signpost_down(ppclst, &st_insert_info, pdata);
+                                break;
+                            case SPT_OP_DELETE:
+                                break;
+                            default:
+                                break;
+                            }
                         }
                     }
                     else//DOWN
@@ -2777,7 +2857,7 @@ find_start:
                             cur_vec.val = atomic64_cmpxchg((atomic64_t *)pcur, cur_vec.val, tmp_vec.val);
                             /*set invalid succ or not, refind from ppre*/
                             pcur = ppre;
-                            goto find_start;
+                            goto refind_forward;
                         }
                         pnext = (spt_vec_t *)vec_id_2_ptr(*ppclst,cur_vec.rd);
                         next_vec.val = pnext->val;                        
@@ -2804,7 +2884,7 @@ find_start:
                                 if(cur_vec.valid == SPT_VEC_INVALID)
                                 {
                                     pcur = ppre;
-                                    goto find_start;
+                                    goto refind_forward;
                                 }
                                 continue;
                             }
@@ -2818,7 +2898,7 @@ find_start:
                             cur_vec.val = atomic64_cmpxchg((atomic64_t *)pcur, cur_vec.val, tmp_vec.val);
                             /*set invalid succ or not, refind from ppre*/
                             pcur = ppre;
-                            goto find_start;
+                            goto refind_forward;
                         }
                         else
                         {
@@ -2831,7 +2911,21 @@ find_start:
                 /*insert*/
                 if(fs_pos < startbit + len)
                 {
-                    return -1;
+                    switch(pqinfo->op){
+                    case SPT_OP_FIND:
+                        break;
+                    case SPT_OP_INSERT:
+                        st_insert_info.pkey_vec= pcur;
+                        st_insert_info.key_val= cur_vec.val;
+                        st_insert_info.fs = fs_pos;
+                        st_insert_info.signpost = signpost;
+                        return do_insert_up_via_d(ppclst, &st_insert_info, pdata);                        
+                        break;
+                    case SPT_OP_DELETE:
+                        break;
+                    default:
+                        break;
+                    }
                 }
                 startbit += len;
                 /*find the same record*/
@@ -2841,7 +2935,7 @@ find_start:
                 }
                 ppre = pcur;
                 pcur = pnext;
-                cur_vec.val = next_vec.val;                
+                cur_vec.val = next_vec.val;
             }
             assert(fs_pos == startbit);
         }
