@@ -140,9 +140,10 @@ extern char* vec_id_2_ptr(cluster_head_t *pclst, unsigned int id);
 #define CLT_NOMEM 2
 #define CLT_ERR 1
 #define SPT_OK 0
-#define SPT_ERR 1
-#define SPT_NOMEM 2
-#define SPT_DO_AGAIN 3
+#define SPT_ERR -1
+#define SPT_NOMEM -2
+#define SPT_DO_AGAIN -3
+#define SPT_NOT_FOUND -4
 
 unsigned int db_alloc(cluster_head_t **ppcluster, char **db);
 cluster_head_t * cluster_init();

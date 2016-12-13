@@ -50,7 +50,9 @@ typedef struct chunk_head
 
 typedef struct cluster_head
 {
-    unsigned int vec_head;
+    int vec_head;
+    int up_dataid;
+    int down_dataid;
     volatile unsigned int vec_free_head;
     volatile unsigned int blk_free_head;
     volatile unsigned int dblk_free_head;
@@ -92,7 +94,7 @@ typedef struct db_head_t
 
 typedef struct spt_data_hd
 {
-    int ref;/*引用计数*/
+    volatile int ref;/*引用计数*/
     int rank;/*for test*/
 }spt_dhd;
 
@@ -187,16 +189,6 @@ typedef struct spt_del_data_node_st
     int                                id;
     struct spt_del_data_node_st    *next;
 }spt_del_data_node;
-
-
-/*修改完成后需要释放内存*/
-///TODO: del data need to free data
-typedef struct spt_modify_entirety
-{
-    spt_md_vec_t        *md_head;/*需要修改的向量链表*/
-    spt_free_vec_node    *free_head;
-    spt_del_data_node    *del_head;//需要释放的数据
-}spt_md_entirety;
 
 
 typedef struct spt_seek_path_node

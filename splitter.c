@@ -336,49 +336,285 @@ int get_data_id(cluster_head_t *pclst, spt_vec_t* pvec)
     }
 }
 
-/*data=-1表明需要遍历到最右*/
- void get_final_vec(cluster_head_t *pclst, spt_vec_t* pvec, spt_vec_t_r *pvec_r, u32 data)
+int get_data_id(cluster_head_t *pclst, spt_vec_t* pvec)
 {
-    pvec_r->pos = 0;
-    while(pvec->flag&SPT_VEC_FLAG_NLAST_MASK)
+    spt_vec_t *pcur, *pnext, *ppre;
+    spt_vec_t tmp_vec, cur_vec, next_vec;
+    u8 direction;
+    u32 vecid;
+
+get_id_start:
+    ppre = 0;
+    cur_vec.val = pvec->val;
+    pcur = pvec;
+    if(cur_vec.valid == SPT_VEC_INVALID)
     {
-        pvec_r->pos += spt_get_pos_multi(pvec->pos)*POW256(spt_get_pos_index(pvec->pos));
-        pvec = (spt_vec_t *)vec_id_2_ptr(pclst,pvec->rdn);
+        return SPT_DO_AGAIN;
     }
-    
-    pvec_r->pos += spt_get_pos_multi(pvec->pos)*POW256(spt_get_pos_index(pvec->pos));
 
-    pvec_r->down = pvec->down;
-
-    if(pvec->flag&SPT_VEC_FLAG_RIGHT_MASK)
+    while(1)
     {
-        pvec_r->right = pvec->rdn;
-        
-        if(data != -1)
+        if(cur_vec.flag == SPT_VEC_FLAG_DATA)
         {
-            pvec_r->data = data;
+            return cur_vec.rd;
         }
+        else if(cur_vec.flag == SPT_VEC_FLAG_RIGHT)
+        {
+            pnext = (spt_vec_t *)vec_id_2_ptr(pclst,cur_vec.rd);
+            next_vec.val = pnext->val;
+            if(next_vec.valid == SPT_VEC_INVALID)
+            {
+                tmp_vec.val = cur_vec.val;
+                vecid = cur_vec.rd;
+                tmp_vec.rd = next_vec.rd;
+                if(next_vec.flag == SPT_VEC_FlAG_SIGNPOST)
+                {
+                    tmp_vec.flag = next_vec.ext_sys_flg;
+                }
+                else if(next_vec.flag == SPT_VEC_FLAG_DATA)
+                {
+                    if(next_vec.down == SPT_NULL)
+                    {
+                        spt_set_data_flag(tmp_vec);
+                    }
+                    else
+                    {
+                        tmp_vec.rd = next_vec.down;
+                    }                
+                }
+                else
+                {
+                    ;
+                }
+                cur_vec.val = atomic64_cmpxchg((atomic64_t *)pcur, cur_vec.val, tmp_vec.val);
+                if(cur_vec.val == tmp_vec.val)//delete succ
+                {
+                    vec_free_to_buf(pclst, vecid);
+                    continue;
+                }
+                else//delete fail
+                {
+                    if(cur_vec.valid == SPT_VEC_INVALID)
+                    {
+                        if(ppre == NULL)
+                            goto get_id_start;
+                        else
+                        {
+                            cur_vec.val = ppre->val;
+                            if(cur_vec.valid == SPT_VEC_INVALID)
+                                goto get_id_start;
+                            else
+                            {
+                                pcur = ppre;
+                                ppre = NULL;
+                                continue;
+                            }
+                        }
+                    }
+                    continue;
+                }
+            }
+            
+            //对于一个向量的右结点:
+                //如果是路标，不能是SPT_VEC_SYS_FLAG_DATA
+                //如果是向量，必然有down
+            if(next_vec.flag == SPT_VEC_FlAG_SIGNPOST)
+            {
+                if(next_vec.ext_sys_flg == SPT_VEC_SYS_FLAG_DATA)
+                {
+                    tmp_vec.val = next_vec.val;
+                    tmp_vec.valid = SPT_VEC_INVALID;
+                    atomic64_cmpxchg((atomic64_t *)pnext, next_vec.val, tmp_vec.val);
+                    //set invalid succ or not, refind from cur
+                    cur_vec.val = pcur->val;
+                    if((cur_vec.valid == SPT_VEC_INVALID))
+                    {
+                        if(ppre == NULL)
+                            goto get_id_start;
+                        else
+                        {
+                            cur_vec.val = ppre->val;
+                            if(cur_vec.valid == SPT_VEC_INVALID)
+                                goto get_id_start;
+                            else
+                            {
+                                pcur = ppre;
+                                ppre = NULL;
+                                continue;
+                            }
+                        }
+                    }
+                    continue;
+                }
+            }
+            else
+            {
+                if(next_vec.down == SPT_NULL)
+                {
+                    tmp_vec.val = next_vec.val;
+                    tmp_vec.valid = SPT_VEC_INVALID;
+                    atomic64_cmpxchg((atomic64_t *)pnext, next_vec.val, tmp_vec.val);
+                    //set invalid succ or not, refind from cur
+                    cur_vec.val = pcur->val;
+                    if((cur_vec.valid == SPT_VEC_INVALID))
+                    {
+                        if(ppre == NULL)
+                            goto get_id_start;
+                        else
+                        {
+                            cur_vec.val = ppre->val;
+                            if(cur_vec.valid == SPT_VEC_INVALID)
+                                goto get_id_start;
+                            else
+                            {
+                                pcur = ppre;
+                                ppre = NULL;
+                                continue;
+                            }
+                        }
+                    }
+                    continue;
+                }
+            }
+        }
+        //cur是路标，方向肯定是right,遍历过程中不会对方向是down的路标调用此接口
         else
         {
-            do
+            if(cur_vec.ext_sys_flg == SPT_VEC_SYS_FLAG_DATA)
             {
-                pvec = (spt_vec_t *)vec_id_2_ptr(pclst,pvec->rdn);
-                if(pvec == NULL)
+                tmp_vec.val = cur_vec.val;
+                tmp_vec.valid = SPT_VEC_INVALID;
+                cur_vec.val = atomic64_cmpxchg((atomic64_t *)pcur, cur_vec.val, tmp_vec.val);
+                /*set invalid succ or not, refind from ppre*/;
+                if(ppre == NULL)
+                    goto get_id_start;
+                else
                 {
-                    assert(0);
-                }                
-            }while(pvec->flag&SPT_VEC_FLAG_RIGHT_MASK);
-
-            pvec_r->data = pvec->rdn;
+                    cur_vec.val = ppre->val;
+                    if(cur_vec.valid == SPT_VEC_INVALID)
+                        goto get_id_start;
+                    else
+                    {
+                        pcur = ppre;
+                        ppre = NULL;
+                        continue;
+                    }
+                }
+            }
+            pnext = (spt_vec_t *)vec_id_2_ptr(pclst,cur_vec.rd);
+            next_vec.val = pnext->val;
+            if(next_vec.valid == SPT_VEC_INVALID)
+            {
+                tmp_vec.val = cur_vec.val;
+                vecid = cur_vec.rd;
+                tmp_vec.rd = next_vec.rd;
+                if(next_vec.flag == SPT_VEC_FlAG_SIGNPOST)
+                {
+                    tmp_vec.ext_sys_flg = next_vec.ext_sys_flg;
+                }
+                else if(next_vec.flag == SPT_VEC_FLAG_DATA)
+                {
+                    if(next_vec.down == SPT_NULL)
+                    {
+                        tmp_vec.ext_sys_flg == SPT_VEC_SYS_FLAG_DATA;
+                    }
+                    else
+                    {
+                        tmp_vec.rd = next_vec.down;
+                    }                
+                }
+                else
+                {
+                    ;
+                }
+                cur_vec.val = atomic64_cmpxchg((atomic64_t *)pcur, cur_vec.val, tmp_vec.val);
+                if(cur_vec.val == tmp_vec.val)//delete succ
+                {
+                    vec_free_to_buf(pclst, vecid);
+                    continue;
+                }
+                else//delete fail
+                {
+                    if(cur_vec.valid == SPT_VEC_INVALID)
+                    {
+                        if(ppre == NULL)
+                            goto get_id_start;
+                        else
+                        {
+                            cur_vec.val = ppre->val;
+                            if(cur_vec.valid == SPT_VEC_INVALID)
+                                goto get_id_start;
+                            else
+                            {
+                                pcur = ppre;
+                                ppre = NULL;
+                                continue;
+                            }
+                        }
+                    }
+                    continue;
+                }                    
+            }
+            //对于一个路标结点:
+                //next为路标，是不合理结构。
+            if(next_vec.flag == SPT_VEC_FlAG_SIGNPOST)
+            {
+                tmp_vec.val = cur_vec.val;
+                tmp_vec.valid = SPT_VEC_INVALID;
+                cur_vec.val = atomic64_cmpxchg((atomic64_t *)pcur, cur_vec.val, tmp_vec.val);
+                /*set invalid succ or not, refind from ppre*/
+                if(ppre == NULL)
+                    goto get_id_start;
+                else
+                {
+                    cur_vec.val = ppre->val;
+                    if(cur_vec.valid == SPT_VEC_INVALID)
+                        goto get_id_start;
+                    else
+                    {
+                        pcur = ppre;
+                        ppre = NULL;
+                        continue;
+                    }
+                }
+            }
+            else
+            {
+                if(next_vec.down == SPT_NULL)
+                {
+                    tmp_vec.val = next_vec.val;
+                    tmp_vec.valid = SPT_VEC_INVALID;
+                    atomic64_cmpxchg((atomic64_t *)pnext, next_vec.val, tmp_vec.val);
+                    //set invalid succ or not, refind from cur
+                    cur_vec.val = pcur->val;
+                    if((cur_vec.valid == SPT_VEC_INVALID))
+                    {
+                        if(ppre == NULL)
+                            goto get_id_start;
+                        else
+                        {
+                            cur_vec.val = ppre->val;
+                            if(cur_vec.valid == SPT_VEC_INVALID)
+                                goto get_id_start;
+                            else
+                            {
+                                pcur = ppre;
+                                ppre = NULL;
+                                continue;
+                            }
+                        }
+                    }
+                    continue;
+                }
+            }            
         }
+        ppre = pcur;
+        pcur = pnext;
+        cur_vec.val = next_vec.val;
     }
-    else
-    {
-        pvec_r->right = SPT_NULL;
-        pvec_r->data = pvec->rdn;
-    }
-    return;
+
 }
+
 /*有可能在最右边增加一个向量(rdn记录d变成记录r);也有可能非最右侧向量通过合并变成最右侧向量，并且改变dataid*/
 /**/
 /*几种情况说明:
@@ -861,7 +1097,7 @@ void do_modify(cluster_head_t **ppclst, spt_md_entirety *pent)
 }
 #endif
 
-int do_insert_signpost_right(cluster_head_t **ppclst, insert_info_t *pinsert, char *new_data)
+int do_insert_dsignpost_right(cluster_head_t **ppclst, insert_info_t *pinsert, char *new_data)
 {
     spt_vec_t *ppre = NULL;
     spt_vec_t tmp_vec, cur_vec, pre_vec, *pcur, *pvec_a;
@@ -911,7 +1147,7 @@ int do_insert_signpost_right(cluster_head_t **ppclst, insert_info_t *pinsert, ch
 
 }
 
-int do_insert_signpost_down(cluster_head_t **ppclst, insert_info_t *pinsert, char *new_data)
+int do_insert_rsignpost_down(cluster_head_t **ppclst, insert_info_t *pinsert, char *new_data)
 {
     spt_vec_t *ppre = NULL;
     spt_vec_t tmp_vec, cur_vec, pre_vec, *pcur, *pvec_a, *pvec_b, *pvec_s;
@@ -1002,6 +1238,37 @@ int do_insert_signpost_down(cluster_head_t **ppclst, insert_info_t *pinsert, cha
     }
 }
 
+int do_insert_first_set(cluster_head_t **ppclst, char *new_data)
+{
+    u32 dataid;
+    char *pdata;
+    spt_vec_t tmp_vec, cur_vec, *pcur;
+
+    dataid = db_alloc(ppclst, &pdata);
+    if(pdata == 0)
+    {
+        /*申请新块，拆分*/
+        assert(0);
+        printf("\r\n%d\t%s", __LINE__, __FUNCTION__);
+        return SPT_NOMEM;
+    }
+    memcpy(pdata, new_data, DATA_SIZE);
+
+    pcur = (spt_vec_t *)vec_id_2_ptr(*ppclst,*ppclst->vec_head);
+    cur_vec.val = pcur->val;
+    tmp_vec.val = cur_vec.val;
+    tmp_vec.rd = dataid;
+    if(tmp_vec.val == atomic64_cmpxchg((atomic64_t *)pcur, cur_vec.val, tmp_vec.val))
+    {
+        return SPT_OK;
+    }
+    else
+    {
+        db_free(*ppclst, dataid);      
+        return SPT_DO_AGAIN;
+    }
+
+}
 
 int do_insert_up_via_r(cluster_head_t **ppclst, insert_info_t *pinsert, char *new_data)
 {
@@ -1273,6 +1540,7 @@ int do_insert_down_via_r(cluster_head_t **ppclst, insert_info_t *pinsert, char *
     }
 }
 /*cur->down == null, 首位为0 ，直接插到cur->down上*/
+//可能是首向量的down
 int do_insert_last_down(cluster_head_t **ppclst, insert_info_t *pinsert, char *new_data)
 {
     spt_vec_t tmp_vec, cur_vec, pre_vec, *pcur, *pvec_a, *pvec_s;
@@ -1434,886 +1702,23 @@ int do_insert_up_via_d(cluster_head_t **ppclst, insert_info_t *pinsert, char *ne
 
 }
 
-
-int do_insert_first_set(cluster_head_t **ppclst, u32 cur_vec, char *new_data)
-{
-    u32 dataid, vec_a;
-    char *pdata;
-    spt_md_entirety *pmdf_ent;
-    spt_md_vec_t *pmdf_vec;
-    spt_vec_t_r tmp_vec_r;
-    spt_vec_t *pvec_a;
-
-    dataid = db_alloc(ppclst, &pdata);
-    if(pdata == 0)
-    {
-        /*申请新块，拆分*/
-        assert(0);
-        printf("\r\n%d\t%s", __LINE__, __FUNCTION__);
-        return 1;
-    }
-    memcpy(pdata, new_data, DATA_SIZE);
-
-    pmdf_ent = malloc(sizeof(spt_md_entirety));
-    if(pmdf_ent == NULL)
-    {
-        assert(0);
-        printf("\r\n%d\t%s", __LINE__, __FUNCTION__);
-        return 1;
-    }
-    pmdf_ent->md_head = NULL;
-    pmdf_ent->free_head = NULL;
-    pmdf_ent->del_head = NULL;
-
-    tmp_vec_r.data = dataid;
-    tmp_vec_r.pos = 0;
-    tmp_vec_r.down = SPT_NULL;
-    tmp_vec_r.right = SPT_NULL;
-    vec_a = construct_vec_new(ppclst, &tmp_vec_r, &pvec_a);
-    if(pvec_a == NULL)
-    {
-        assert(0);
-        printf("\r\n%d\t%s", __LINE__, __FUNCTION__);
-        return 1;
-    }
-    
-    pmdf_vec = malloc(sizeof(spt_md_vec_t));
-    if(pmdf_vec == NULL)
-    {
-        assert(0);
-        printf("\r\n%d\t%s", __LINE__, __FUNCTION__);
-        return 1;
-    }
-    pmdf_vec->vec_id = cur_vec;
-    pmdf_vec->value.data = SPT_INVALID;
-    pmdf_vec->value.down = SPT_INVALID;
-    pmdf_vec->value.right = vec_a;
-    pmdf_vec->value.pos = SPT_INVALID;
-    
-    pmdf_vec->next = pmdf_ent->md_head;
-    pmdf_ent->md_head = pmdf_vec;
-
-    do_modify(ppclst, pmdf_ent);
-    return 0;
-}
-
-int do_del_isolate(cluster_head_t **ppclst, u32 up_2_del, int direction, u32 dataid)
-{
-    u32 cur_vec;
-    spt_md_entirety *pmdf_ent;
-    spt_md_vec_t *pmdf_vec;
-    spt_vec_t_r st_vec_r, st_u2dr_r;
-    spt_vec_t *pvec;
-    spt_del_data_node *pdel_data;
-    spt_free_vec_node *pfree_vec;
-
-    pmdf_ent = malloc(sizeof(spt_md_entirety));
-    if(pmdf_ent == NULL)
-    {
-        assert(0);
-        printf("\r\n%d\t%s", __LINE__, __FUNCTION__);
-        return 1;
-    }
-    pmdf_ent->md_head = NULL;
-    pmdf_ent->free_head = NULL;
-    pmdf_ent->del_head = NULL;
-    
-    pmdf_vec = malloc(sizeof(spt_md_vec_t));
-    if(pmdf_vec == NULL)
-    {
-        assert(0);
-        printf("\r\n%d\t%s", __LINE__, __FUNCTION__);
-        return 1;
-    }
-    if(up_2_del == SPT_NULL)
-    {
-        pvec = (spt_vec_t *)vec_id_2_ptr(*ppclst, (*ppclst)->vec_head);
-        get_vec_rd(*ppclst, pvec, &st_vec_r);
-        cur_vec = st_vec_r.right;
-
-        pmdf_vec->vec_id = (*ppclst)->vec_head;
-        pmdf_vec->value.data = -1;
-        pmdf_vec->value.down = SPT_INVALID;
-        pmdf_vec->value.right = SPT_NULL;
-        pmdf_vec->value.pos = 0;
-    }
-    else
-    {
-        pvec = (spt_vec_t *)vec_id_2_ptr(*ppclst, up_2_del);
-        get_final_vec(*ppclst, pvec, &st_vec_r, -1);
-        cur_vec = st_vec_r.down;
-        /*need merge up_2_del->right*/
-        if(direction == SPT_RIGHT)
-        {
-            pvec = (spt_vec_t *)vec_id_2_ptr(*ppclst, st_vec_r.right);
-            get_final_vec(*ppclst, pvec, &st_u2dr_r, st_vec_r.data);
-            /*merge up_2_del->right*/
-            if(st_u2dr_r.pos != 0)
-            {
-                pmdf_vec->value.pos = st_vec_r.pos + st_u2dr_r.pos;
-                pmdf_vec->value.data = SPT_INVALID;
-            }
-            else
-            {
-                pmdf_vec->value.pos = 0;
-                pmdf_vec->value.data = st_vec_r.data;            
-            }
-            
-            pmdf_vec->vec_id = up_2_del;
-            pmdf_vec->value.down = st_u2dr_r.down;
-            pmdf_vec->value.right = st_u2dr_r.right;
-
-            pfree_vec = malloc(sizeof(spt_free_vec_node));
-            if(pfree_vec == NULL)
-            {
-                assert(0);
-                printf("\r\n%d\t%s", __LINE__, __FUNCTION__);
-                return 1;
-            }
-            pfree_vec->id = st_vec_r.right;
-            pfree_vec->next = pmdf_ent->free_head;
-            pmdf_ent->free_head = pfree_vec;            
-
-        }
-        else
-        {
-            pmdf_vec->vec_id = up_2_del;
-            pmdf_vec->value.pos = SPT_INVALID;
-            pmdf_vec->value.down = SPT_NULL;
-            pmdf_vec->value.right = SPT_INVALID;
-            pmdf_vec->value.data = SPT_INVALID;
-        }
-    #if 0
-        pvec = (spt_vec_t *)vec_id_2_ptr(*ppclst, up_2_del);
-        get_final_vec(*ppclst, pvec, &st_vec_r, -1);
-        cur_vec = st_vec_r.down;
-
-        pvec = (spt_vec_t *)vec_id_2_ptr(*ppclst, st_vec_r.right);
-        get_final_vec(*ppclst, pvec, &st_u2dr_r, st_vec_r.data);
-        /*merge up_2_del->right*/
-        if(st_u2dr_r.pos != 0 && direction == SPT_RIGHT)
-        {
-            pmdf_vec->value.pos = st_vec_r.pos + st_u2dr_r.pos;
-            pmdf_vec->value.data = SPT_INVALID;
-        }
-        else
-        {
-            pmdf_vec->value.pos = 0;
-            pmdf_vec->value.data = st_vec_r.data;            
-        }
-        
-        pmdf_vec->vec_id = up_2_del;
-        pmdf_vec->value.down = SPT_NULL;
-        pmdf_vec->value.right = st_u2dr_r.right;
-    #endif
-    }
-    pmdf_vec->next = pmdf_ent->md_head;
-    pmdf_ent->md_head = pmdf_vec;
-    
-    while(cur_vec != SPT_NULL)
-    {
-        pfree_vec = malloc(sizeof(spt_free_vec_node));
-        if(pfree_vec == NULL)
-        {
-            assert(0);
-            printf("\r\n%d\t%s", __LINE__, __FUNCTION__);
-            return 1;
-        }
-        pfree_vec->id = cur_vec;
-        pfree_vec->next = pmdf_ent->free_head;
-        pmdf_ent->free_head = pfree_vec;
-        
-        pvec = (spt_vec_t *)vec_id_2_ptr(*ppclst, cur_vec);
-        get_vec_rd(*ppclst, pvec, &st_vec_r);
-        cur_vec = st_vec_r.right;
-    }
-
-    pdel_data = malloc(sizeof(spt_del_data_node));
-    if(pdel_data == NULL)
-    {
-        assert(0);
-        printf("\r\n%d\t%s", __LINE__, __FUNCTION__);
-        return 1;
-    }
-    pdel_data->id = dataid;
-    pdel_data->next = pmdf_ent->del_head;
-    pmdf_ent->del_head = pdel_data;
-
-    do_modify(ppclst, pmdf_ent);
-    return 0;
-}
-
-int do_del_related_down(cluster_head_t **ppclst, spt_path seek_path, u32 dataid)
-{
-    u32 cur_vec, del_2_down, down;
-    int direction;
-    spt_md_entirety *pmdf_ent;
-    spt_md_vec_t *pmdf_vec;
-    spt_vec_t_r st_d2d_r, st_d_r, st_dr_r;
-    spt_vec_t *pvec_d, *pvec_d2d, *pvec_dr;
-    spt_del_data_node *pdel_data;
-    spt_free_vec_node *pfree_vec;
-
-    pmdf_ent = malloc(sizeof(spt_md_entirety));
-    if(pmdf_ent == NULL)
-    {
-        assert(0);
-        printf("\r\n%d\t%s", __LINE__, __FUNCTION__);
-        return 1;
-    }
-    pmdf_ent->md_head = NULL;
-    pmdf_ent->free_head = NULL;
-    pmdf_ent->del_head = NULL;
-
-    pmdf_vec = malloc(sizeof(spt_md_vec_t));
-    if(pmdf_vec == NULL)
-    {
-        assert(0);
-        printf("\r\n%d\t%s", __LINE__, __FUNCTION__);
-        return 1;
-    }
-
-    del_2_down = seek_path.del_2_down;
-    down = seek_path.down;
-    direction = seek_path.direction;
-
-    pvec_d = (spt_vec_t *)vec_id_2_ptr(*ppclst, down);
-    get_final_vec(*ppclst, pvec_d, &st_d_r, -1);
-
-    /*pos==0,肯定没有down*/
-    if(st_d_r.pos == 0)
-    {
-        pmdf_vec->vec_id = del_2_down;
-        pmdf_vec->value.data = st_d_r.data;
-        pmdf_vec->value.down = st_d_r.down;
-        pmdf_vec->value.right = st_d_r.right;
-        pmdf_vec->value.pos = 0;        
-    }
-    else
-    {
-        pvec_d2d = (spt_vec_t *)vec_id_2_ptr(*ppclst, del_2_down);
-        get_final_vec(*ppclst, pvec_d2d, &st_d2d_r, -1);
-        /*如果方向是从down遍历到del_2_down，不需merge down->right*/
-        /*del_2_down merge down and down->right*/
-        if(direction == SPT_RIGHT && st_d_r.down == SPT_NULL)
-        {
-            pvec_dr = (spt_vec_t *)vec_id_2_ptr(*ppclst, st_d_r.right);
-            get_final_vec(*ppclst, pvec_dr, &st_dr_r, st_d_r.data);
-            pmdf_vec->vec_id = del_2_down;
-            pmdf_vec->value.data = st_d_r.data;
-            pmdf_vec->value.down = st_dr_r.down;
-            pmdf_vec->value.right = st_dr_r.right;
-            if(st_dr_r.pos == 0)
-            {
-                pmdf_vec->value.pos = 0;
-            }
-            else
-            {
-                pmdf_vec->value.pos = st_d2d_r.pos + st_d_r.pos + st_dr_r.pos;
-            }
-            /*free down->right*/
-            pfree_vec = malloc(sizeof(spt_free_vec_node));
-            if(pfree_vec == NULL)
-            {
-                assert(0);
-                printf("\r\n%d\t%s", __LINE__, __FUNCTION__);
-                return 1;
-            }
-            pfree_vec->id = st_d_r.right;
-            pfree_vec->next = pmdf_ent->free_head;
-            pmdf_ent->free_head = pfree_vec;            
-        }
-        /*only merge down*/
-        else
-        {
-            pmdf_vec->vec_id = del_2_down;
-            pmdf_vec->value.data = st_d_r.data;
-            pmdf_vec->value.down = st_d_r.down;
-            pmdf_vec->value.right = st_d_r.right;
-            pmdf_vec->value.pos = st_d2d_r.pos + st_d_r.pos;
-        }
-       
-    }
-    pmdf_vec->next = pmdf_ent->md_head;
-    pmdf_ent->md_head = pmdf_vec;    
-
-    pfree_vec = malloc(sizeof(spt_free_vec_node));
-    if(pfree_vec == NULL)
-    {
-        assert(0);
-        printf("\r\n%d\t%s", __LINE__, __FUNCTION__);
-        return 1;
-    }
-    pfree_vec->id = st_d2d_r.right;
-    pfree_vec->next = pmdf_ent->free_head;
-    pmdf_ent->free_head = pfree_vec;
-
-    pfree_vec = malloc(sizeof(spt_free_vec_node));
-    if(pfree_vec == NULL)
-    {
-        assert(0);
-        printf("\r\n%d\t%s", __LINE__, __FUNCTION__);
-        return 1;
-    }
-    pfree_vec->id = down;
-    pfree_vec->next = pmdf_ent->free_head;
-    pmdf_ent->free_head = pfree_vec;
-
-    if((*ppclst)->debug)
-    {
-        cur_vec = st_d2d_r.right;
-        pvec_d = (spt_vec_t *)vec_id_2_ptr(*ppclst, cur_vec);
-        get_final_vec(*ppclst, pvec_d, &st_d_r, -1);
-        if(st_d_r.right != SPT_NULL)
-        {
-            printf("\r\n%d\t%s", __LINE__, __FUNCTION__);
-            return 1;
-        }        
-    }
-
-    pdel_data = malloc(sizeof(spt_del_data_node));
-    if(pdel_data == NULL)
-    {
-        assert(0);
-        printf("\r\n%d\t%s", __LINE__, __FUNCTION__);
-        return 1;
-    }
-    pdel_data->id = dataid;
-    pdel_data->next = pmdf_ent->del_head;
-    pmdf_ent->del_head = pdel_data;        
-
-    do_modify(ppclst, pmdf_ent);
-    return 0;
-}
-
-
-
-/*ret:1查询不到；0删除成功；-1错误*/
-int delete_data(cluster_head_t **ppclst, char *pdata)
-{
-    u32 dataid;
-    u32 cur_vec, down_vec, right_vec, cur_data;
-    spt_vec_t *pcur_vec, *pdown_vec, *pright_vec;
-    char *pcur_data;//*ppre_data,
-    u64 startbit, endbit, len, fs_pos;
-    int direction, ret;
-    vec_cmpret_t cmpres;
-    spt_vec_t_r st_vec_r, st_right_r, st_down_r;
-    spt_path seek_path = {-1,-1,-1,-1};
-
-    startbit = endbit = 0;
-
-    cur_vec = (*ppclst)->vec_head;
-    cur_data = -1;
-
-    pcur_vec = (spt_vec_t *)vec_id_2_ptr(*ppclst, cur_vec);
-    get_final_vec(*ppclst, pcur_vec, &st_vec_r, cur_data);
-    fs_pos = find_fs(pdata, startbit, DATA_BIT_MAX - startbit);
-
-    if(fs_pos == 0 && st_vec_r.right == SPT_NULL)
-    {
-        return -1;
-    }
-
-    while(startbit<DATA_BIT_MAX)
-    {
-        /*首位是1，与pcur_vec->right比*/
-        if(fs_pos == startbit)
-        {
-            if(cur_data == -1)//yzx
-            {
-                cur_data = st_vec_r.data;
-                pcur_data = db_id_2_ptr(*ppclst, cur_data);
-            }
-            right_vec = st_vec_r.right;
-            assert(right_vec != SPT_NULL);
-
-            pright_vec = (spt_vec_t *)vec_id_2_ptr(*ppclst, right_vec);
-            get_final_vec(*ppclst, pright_vec, &st_right_r, cur_data);
-            len = (st_right_r.pos == 0)?(DATA_BIT_MAX - startbit):st_right_r.pos;         
-
-            ret = diff_identify(pdata, pcur_data, startbit, len, &cmpres);
-            if(ret == 0)
-            {
-                cur_vec = right_vec;
-                st_vec_r = st_right_r;
-                startbit += len;
-                direction = SPT_RIGHT;
-                if(st_vec_r.down != SPT_NULL)
-                {
-                    seek_path.del_2_down = cur_vec;
-                    seek_path.down = st_vec_r.down;
-                    /*表明前一步是从右到达del_2_down的*/
-                    seek_path.direction = direction;
-                }
-                fs_pos = find_fs(pdata, startbit, DATA_BIT_MAX - startbit);
-                continue;
-            }
-            else if(ret > 0)
-            {
-                return -1;
-            }
-            else
-            {
-                return -1;
-            }
-        }
-        /*肯定比startbit大。与pcur->down的pos长度比*/
-        else
-        {
-            seek_path.del_2_down = SPT_NULL;
-            seek_path.down = SPT_NULL;            
-            cur_data = -1;
-            while(fs_pos > startbit)
-            {
-                seek_path.up_2_del = cur_vec;
-                seek_path.direction = direction;
-                down_vec = st_vec_r.down;
-                if(down_vec == SPT_NULL)
-                {
-                    return -1;
-                }
-                pdown_vec = (spt_vec_t *)vec_id_2_ptr(*ppclst, down_vec);
-                get_final_vec(*ppclst, pdown_vec, &st_down_r, cur_data);
-                len = (st_down_r.pos == 0)?(DATA_BIT_MAX - startbit):st_down_r.pos;
-                /*insert*/
-                if(fs_pos < startbit + len)
-                {
-                    return -1;
-                }
-                cur_vec = down_vec;
-                st_vec_r = st_down_r;
-                direction = SPT_DOWN;
-                startbit += len;
-            }
-            assert(fs_pos == startbit);
-            if(st_vec_r.down != SPT_NULL)
-            {
-                seek_path.del_2_down = cur_vec;
-                seek_path.down = st_vec_r.down;
-                seek_path.direction = direction;
-            }            
-        }
-    }
-    assert(startbit == DATA_BIT_MAX);
-    dataid = st_vec_r.data;
-    if(seek_path.down == SPT_NULL)
-    {
-        return do_del_isolate(ppclst,seek_path.up_2_del, seek_path.direction, dataid);
-    }
-    else
-    {
-        return do_del_related_down(ppclst, seek_path, dataid);
-    }
-}
-
-
-/*ret:1查询不到；0删除成功；-1错误*/
-int delete_data(cluster_head_t **ppclst, char *pdata)
-{
-    u32 cur_data, vecid_cur, counter;
-    spt_vec_t *ppre = NULL;
-    spt_vec_t tmp_vec, cur_vec, pre_vec, *pcur;
-    char *pcur_data;//*ppre_data,
-    u64 startbit, endbit, len, fs_pos, signpost;
-    
-    u8 direction;
-    u64 ret;
-    vec_cmpret_t cmpres;
-    insert_info_t st_insert_info;
-    spt_path seek_path = {0};
-    char *pcmp = pdata;
-
-    startbit = endbit = 0;
-    signpost = 0;
-    cur_data = SPT_INVALID;
-    pcur = (spt_vec_t *)vec_id_2_ptr(*ppclst, (*ppclst)->vec_head);
-    cur_vec.val = pcur->val;
-    direction = SPT_DIR_START;
-
-delete_start:    
-    fs_pos = find_fs(pcmp, startbit, DATA_BIT_MAX);
-    
-    while(startbit<DATA_BIT_MAX)
-    {
-        /*首位是1，与pcur_vec->right比*/
-        if(fs_pos == startbit)
-        {
-            if(cur_vec.flag == SPT_VEC_FlAG_SIGNPOST)
-            {
-                signpost = cur_vec.idx << SPT_VEC_SIGNPOST_BIT;
-                if(direction == SPT_DOWN)
-                {
-                    ppre = pcur;
-                    pre_vec.val = cur_vec.val;            
-                    pcur = (spt_vec_t *)vec_id_2_ptr(*ppclst,pre_vec.rd);
-                    cur_vec = pcur->val;
-                    if(cur_vec.valid != SPT_VEC_INVALID
-                        && cur_vec.flag != SPT_VEC_FlAG_SIGNPOST
-                        && cur_vec.pos == 0)
-                    {
-                        continue;
-                    }
-                    return -1;
-                }
-                if(cur_vec.ext_sys_flg == SPT_VEC_SYS_FLAG_DATA)
-                {
-                    spt_debug("illegal vec: valid signpost data vec\n");
-                    assert(0);
-                    return -1;
-                }
-            }
-            if(cur_vec.flag == SPT_VEC_FLAG_DATA)
-            {
-                len = DATA_BIT_MAX - startbit;
-                ppre = pcur;
-                pre_vec.val = cur_vec.val;
-                pcur = NULL;
-                cur_vec = SPT_NULL;
-                direction = SPT_RIGHT;
-            }
-            else
-            {
-                ppre = pcur;
-                pre_vec.val = cur_vec.val;            
-                pcur = (spt_vec_t *)vec_id_2_ptr(*ppclst,pre_vec.rd);
-                cur_vec = pcur->val;
-                if(pre_vec.flag == SPT_VEC_FlAG_SIGNPOST)
-                {
-                    signpost = pre_vec.idx << SPT_VEC_SIGNPOST_BIT;
-                    if(direction == SPT_DOWN)
-                    {
-                        ppre = pcur;
-                        pre_vec.val = pre_vec.val;            
-                        pcur = (spt_vec_t *)vec_id_2_ptr(*ppclst,pre_vec.rd);
-                        pre_vec = pcur->val;
-                        if(pre_vec.valid != SPT_VEC_INVALID
-                            && pre_vec.flag != SPT_VEC_FlAG_SIGNPOST
-                            && pre_vec.pos == 0)
-                        {
-                            continue;
-                        }
-                        return -1;
-                    }
-                    if(pre_vec.ext_sys_flg == SPT_VEC_SYS_FLAG_DATA)
-                    {
-                        spt_debug("illegal vec: valid signpost data vec\n");
-                        assert(0);
-                        return -1;
-                    }
-                    if(cur_vec.valid != SPT_VEC_INVALID && cur_vec.flag == SPT_VEC_FlAG_SIGNPOST)
-                    {
-
-                    }
-                }
-
-                while(1)
-                {
-                    if(cur_vec.valid == SPT_VEC_INVALID)
-                    {
-                        tmp_vec.val = pre_vec.val;
-                        /*一定是从right遍历过来的*/
-                        if(cur_vec.flag == SPT_VEC_FlAG_SIGNPOST)
-                        {
-                            if(cur_vec.ext_sys_flg == SPT_VEC_SYS_FLAG_DATA)
-                            {
-                                spt_set_data_flag(tmp_vec);
-                            }
-                            tmp_vec.rd = cur_vec.rd;
-                        }
-                        else if(cur_vec.flag == SPT_VEC_FLAG_DATA)
-                        {
-                            if(cur_vec.down == SPT_NULL)
-                            {
-                                spt_set_data_flag(tmp_vec);
-                                tmp_vec.rd = cur_vec.rd;
-                            }
-                            else
-                            {
-                                tmp_vec.rd = cur_vec.down;
-                                cur_data = -1;
-                            }                
-                        }
-                        else
-                        {
-                            tmp_vec.rd = cur_vec.rd;
-                        }
-                        vecid_cur = pre_vec.rd;
-                        pre_vec.val = atomic64_cmpxchg((atomic64_t *)ppre, pre_vec.val, tmp_vec.val);
-                        if(pre_vec.val == tmp_vec.val)//delete succ
-                        {
-                            vec_free_to_buf(*ppclst, vecid_cur);
-                        }
-                        /*不论交换成功与否，直接拿新的pre_vec进行判断和处理*/
-                        if(pre_vec.valid == SPT_VEC_INVALID)
-                        {
-                            /*从头再来*/
-                            return SPT_DO_AGAIN;
-                        }
-                        if(pre_vec.flag == SPT_VEC_FLAG_DATA)
-                        {
-                            len = DATA_BIT_MAX - startbit;
-                            break;
-                        }
-                        else if(pre_vec.flag == SPT_VEC_FLAG_RIGHT)
-                        {
-                            pcur = (spt_vec_t *)vec_id_2_ptr(*ppclst,pre_vec.rd);
-                            cur_vec = *pcur;
-                        }                
-                        else if(pre_vec.flag == SPT_VEC_FlAG_SIGNPOST)
-                        {
-                            signpost = pre_vec.idx << SPT_VEC_SIGNPOST_BIT;
-                            ///TODO:
-                            if(pre_vec.ext_sys_flg == SPT_VEC_SYS_FLAG_DATA)
-                            {
-                                len = DATA_BIT_MAX - startbit;
-                                break;
-                            }
-                            pcur = (spt_vec_t *)vec_id_2_ptr(*ppclst,pre_vec.rd);
-                            cur_vec = *pcur;
-                        }
-                        else
-                        {
-                            assert(0);
-                            return SPT_ERR;
-                        }
-                    }
-                    else
-                    {
-                        if(cur_vec.flag == SPT_VEC_FlAG_SIGNPOST)
-                        {
-                            if(cur_vec.ext_sys_flg == SPT_VEC_SYS_FLAG_DATA)
-                            len = (cur_vec.idx << SPT_VEC_SIGNPOST_BIT ) - startbit + 1;
-                        }
-                        else
-                        {
-                            if(cur_vec.down == SPT_NULL)
-                            {
-                                do
-                                {
-                                    tmp_vec.val = cur_vec.val;
-                                    tmp_vec.valid = SPT_VEC_INVALID;                                
-                                    cur_vec.val = atomic64_cmpxchg((atomic64_t *)pcur, cur_vec.val, tmp_vec.val);
-                                }while(cur_vec.down == SPT_NULL && cur_vec.valid == SPT_VEC_VALID);
-                                continue;
-                            }
-                            len = cur_vec.pos + signpost - startbit + 1;
-                        }
-                        break;
-                    }
-                }
-                if(pre_vec.flag == SPT_VEC_FlAG_SIGNPOST)
-                {
-                    counter = seek_path.counter++;
-                }
-                else
-                {
-                    counter = seek_path.counter = 0;
-                }
-                seek_path.direction[counter] = direction;
-                seek_path.pkey_vec[counter] = ppre;
-                seek_path.key_val[counter] = pre_vec.val;
-                direction = SPT_RIGHT;
-            }
-            if(cur_data == -1)//yzx
-            {
-                cur_data = get_data_id(*ppclst, pcur);
-                pcur_data = db_id_2_ptr(*ppclst, cur_data);
-            }            
-            ret = diff_identify(pcmp, pcur_data, startbit, len, &cmpres);
-            if(ret == 0)
-            {
-                startbit += len;              
-                /*find the same record*/
-                if(startbit >= DATA_BIT_MAX)
-                {
-                    break;
-                }
-                ///TODO:startbit already >= DATA_BIT_MAX
-                fs_pos = find_fs(pdata, startbit, DATA_BIT_MAX - startbit);
-                continue;
-            }
-            /*insert up*/
-            else if(ret > 0)
-            {
-                return -1;
-            }
-            /*insert down*/
-            else
-            {
-                return -1;
-            }        
-        }
-        else
-        {
-            cur_data = -1;
-            
-            while(fs_pos > startbit)
-            {
-                ppre = pcur;
-                pre_vec.val = cur_vec.val;
-                if(pre_vec.flag == SPT_VEC_FlAG_SIGNPOST)
-                {
-                    signpost = cur_vec.idx << SPT_VEC_SIGNPOST_BIT;
-                    if(direction == SPT_RIGHT)
-                    {
-                        pcur = (spt_vec_t *)vec_id_2_ptr(*ppclst,pre_vec.rd);
-                        cur_vec = pcur->val;
-                        if(cur_vec.valid != SPT_VEC_INVALID
-                            && cur_vec.flag != SPT_VEC_FlAG_SIGNPOST
-                            && cur_vec.pos == 0)
-                        {
-                            continue;
-                        }
-                        return -1;
-                    }
-                    if(pre_vec.rd == SPT_NULL)
-                    {
-                        return -1;
-                    }
-                    else
-                    {
-                        pcur = (spt_vec_t *)vec_id_2_ptr(*ppclst,pre_vec.rd);
-                    }
-                }
-                else
-                {
-                    if(pre_vec.down == SPT_NULL)
-                    {
-                        return -1;
-                    }
-                    else
-                    {
-                        seek_path.pkey_vec[1] = seek_path.pkey_vec[0];
-                        seek_path.signpost[1] = seek_path.signpost[0];
-                        seek_path.pkey_vec[0] = ppre;
-                        seek_path.signpost[0] = signpost;
-                        
-                        pcur = (spt_vec_t *)vec_id_2_ptr(*ppclst,pre_vec.down);
-                    }
-                }
-                cur_vec = pcur->val;
-            //    direction = SPT_DOWN;
-                while(cur_vec.valid == SPT_VEC_INVALID)
-                {
-                    tmp_vec.val = pre_vec.val;
-                    /*一定是从down遍历过来的*/
-                    if(pre_vec.flag == SPT_VEC_FlAG_SIGNPOST)
-                    {
-                        if(cur_vec.flag == SPT_VEC_FlAG_SIGNPOST)
-                        {
-                            tmp_vec.rd = cur_vec.rd;
-                        }
-                        else
-                        {
-                            tmp_vec.rd = cur_vec.down;
-                        }
-                        vecid_cur = pre_vec.rd;
-                    }
-                    else
-                    {
-                        if(cur_vec.flag == SPT_VEC_FlAG_SIGNPOST)
-                        {
-                            tmp_vec.down = cur_vec.rd;
-                        }
-                        else
-                        {
-                            tmp_vec.down = cur_vec.down;
-                        }
-                        vecid_cur = pre_vec.down;
-                    }
-                    pre_vec.val = atomic64_cmpxchg((atomic64_t *)ppre, pre_vec.val, tmp_vec.val);
-                    if(pre_vec.val == tmp_vec.val)//delete succ
-                    {
-                        vec_free_to_buf(*ppclst, vecid_cur);
-                    }                    
-                    /*不论交换成功与否，直接拿新的pre_vec进行判断和处理*/
-                    if(pre_vec.valid == SPT_VEC_INVALID)
-                    {
-                        pcur =  seek_path.pkey_vec[1];
-                        signpost = seek_path.signpost[1];
-                        seek_path.pkey_vec[1] = 0;
-                        seek_path.signpost[1] = 0;
-                        seek_path.pkey_vec[0] = 0;
-                        seek_path.signpost[0] = 0;
-                        cur_vec.val = pcur->val;
-                        if(cur_vec.valid == SPT_VEC_INVALID)
-                        {
-                            return SPT_DO_AGAIN;
-                        }
-                        else
-                        {
-                            startbit = signpost + cur_vec.pos;
-                            goto delete_start;
-                        }
-                    }
-                    /*insert last down*/
-                    if(pre_vec.flag == SPT_VEC_FlAG_SIGNPOST)
-                    {
-                        if(pre_vec.rd == SPT_NULL)
-                        {
-                            return -1;
-                        }
-                    }
-                    else
-                    {
-                        if(pre_vec.down == SPT_NULL)
-                        {
-                            return -1;
-                        }
-                    }
-                    pcur = (spt_vec_t *)vec_id_2_ptr(*ppclst,pre_vec.down);
-                    cur_vec = pcur->val;
-                }
-                if(cur_vec.flag == SPT_VEC_FlAG_SIGNPOST)
-                {
-                    len = (cur_vec.idx << SPT_VEC_SIGNPOST_BIT ) - startbit + 1;
-                }
-                else
-                {
-                    len = cur_vec.pos + signpost - startbit + 1;
-                }
-                /*insert*/
-                if(fs_pos < startbit + len)
-                {
-                    return -1;
-                }
-                if(pre_vec.flag != SPT_VEC_FlAG_SIGNPOST && direction == SPT_DOWN)
-                {
-                    counter = seek_path.counter = 0;
-                }
-                else
-                {
-                    counter = seek_path.counter++;
-                }
-                seek_path.direction[counter] = direction;
-                seek_path.pkey_vec[counter] = ppre;
-                seek_path.key_val[counter] = pre_vec.val;
-                direction = SPT_DOWN;
-                
-                startbit += len;
-            }
-            assert(fs_pos == startbit);
-        }
-    }
-
-}
-
 /*ret:1查询不到；0删除成功；-1错误*/
 int find_data(cluster_head_t **ppclst, query_info_t *pqinfo)
 {
-    u32 cur_data, vecid;
+    u32 cur_data, vecid, cmp, op;
     spt_vec_t *pcur, *pnext, *ppre;
     spt_vec_t tmp_vec, cur_vec, pre_vec, next_vec;
     char *pcur_data;//*ppre_data,
     u64 startbit, endbit, len, fs_pos, signpost;
-    
+    int va_old, va_new;
     u8 direction;
-    u64 ret;
+    u32 ret = SPT_NOT_FOUND;
     vec_cmpret_t cmpres;
     insert_info_t st_insert_info;
-    spt_path seek_path = {0};
     char *pdata;
+    spt_dhd *pdh;
+//    query_info_t *pqinfo = pquery_info;
+    op = pqinfo->op;
 
 refind_start:
     pdata = pqinfo->data;
@@ -2375,7 +1780,7 @@ refind_forward:
                         else
                         {
                             tmp_vec.rd = next_vec.down;
-                            cur_data = -1;
+                            cur_data = SPT_INVALID;
                         }                
                     }
                     else
@@ -2408,7 +1813,7 @@ refind_forward:
                     {
                         tmp_vec.val = next_vec.val;
                         tmp_vec.valid = SPT_VEC_INVALID;
-                        atomic64_cmpxchg((atomic64_t *)pcur, next_vec.val, tmp_vec.val);
+                        atomic64_cmpxchg((atomic64_t *)pnext, next_vec.val, tmp_vec.val);
                         //set invalid succ or not, refind from cur
                         cur_vec.val = pcur->val;
                         if((cur_vec.valid == SPT_VEC_INVALID))
@@ -2426,7 +1831,7 @@ refind_forward:
                     {
                         tmp_vec.val = next_vec.val;
                         tmp_vec.valid = SPT_VEC_INVALID;
-                        atomic64_cmpxchg((atomic64_t *)pcur, next_vec.val, tmp_vec.val);
+                        atomic64_cmpxchg((atomic64_t *)pnext, next_vec.val, tmp_vec.val);
                         //set invalid succ or not, refind from cur
                         cur_vec.val = pcur->val;
                         if((cur_vec.valid == SPT_VEC_INVALID))
@@ -2476,7 +1881,7 @@ refind_forward:
                             else
                             {
                                 tmp_vec.rd = next_vec.down;
-                                cur_data = -1;
+                                cur_data = SPT_INVALID;
                             }                
                         }
                         else
@@ -2516,7 +1921,7 @@ refind_forward:
                         {
                             tmp_vec.val = next_vec.val;
                             tmp_vec.valid = SPT_VEC_INVALID;
-                            atomic64_cmpxchg((atomic64_t *)pcur, next_vec.val, tmp_vec.val);
+                            atomic64_cmpxchg((atomic64_t *)pnext, next_vec.val, tmp_vec.val);
                             //set invalid succ or not, refind from cur
                             cur_vec.val = pcur->val;
                             if((cur_vec.valid == SPT_VEC_INVALID))
@@ -2586,17 +1991,25 @@ refind_forward:
                     }
                     else
                     {
-                        switch(pqinfo->op){
+                        switch(op){
                         case SPT_OP_FIND:
-                            break;
+                            return ret;
                         case SPT_OP_INSERT:
                             st_insert_info.pkey_vec = pcur;
                             st_insert_info.key_val= cur_vec.val;
                             //st_insert_info.signpost = signpost;
-                            return do_insert_signpost_right(ppclst, &st_insert_info, pdata);
+                            ret = do_insert_dsignpost_right(ppclst, &st_insert_info, pdata);
+                            if(ret == SPT_DO_AGAIN)
+                            {
+                                goto refind_start;
+                            }
+                            else
+                            {
+                                return ret;
+                            }
                             break;
                         case SPT_OP_DELETE:
-                            break;
+                            return ret;
                         default:
                             break;
                         }
@@ -2604,14 +2017,43 @@ refind_forward:
                 }
             }
 
-            if(cur_data == -1)//yzx
+            if(cur_data == SPT_INVALID)//yzx
             {
                 cur_data = get_data_id(*ppclst, pcur);
-                pcur_data = db_id_2_ptr(*ppclst, cur_data);
+                if(cur_data >= 0)
+                {
+                    pcur_data = db_id_2_ptr(*ppclst, cur_data) + sizeof(spt_dhd);
+                }
+                else if(cur_data == SPT_DO_AGAIN)
+                    goto refind_start;
+                else if(cur_data == SPT_NULL)
+                {
+                    switch(op){
+                    case SPT_OP_FIND:
+                        return ret;
+                    case SPT_OP_INSERT:
+                        ret = do_insert_first_set(ppclst, pdata);
+                        if(ret == SPT_DO_AGAIN)
+                        {
+                            goto refind_start;
+                        }
+                        else
+                        {
+                            return ret;
+                        }
+                        break;
+                    case SPT_OP_DELETE:
+                        return ret;
+                    default:
+                        break;
+                    }
+
+                }
+                
             }
             
-            ret = diff_identify(pdata, pcur_data, startbit, len, &cmpres);
-            if(ret == 0)
+            cmp = diff_identify(pdata, pcur_data, startbit, len, &cmpres);
+            if(cmp == 0)
             {
                 startbit += len;              
                 /*find the same record*/
@@ -2628,21 +2070,29 @@ refind_forward:
                 continue;
             }
             /*insert up*/
-            else if(ret > 0)
+            else if(cmp > 0)
             {
-                switch(pqinfo->op){
+                switch(op){
                 case SPT_OP_FIND:
-                    break;
+                    return ret;
                 case SPT_OP_INSERT:
                     st_insert_info.pkey_vec= pcur;
                     st_insert_info.key_val= cur_vec.val;
                     st_insert_info.cmp_pos = cmpres.pos;
                     st_insert_info.fs = cmpres.smallfs;
                     st_insert_info.signpost = signpost;
-                    return do_insert_up_via_r(ppclst, &st_insert_info, pdata);                    
+                    ret = do_insert_up_via_r(ppclst, &st_insert_info, pdata);
+                    if(ret == SPT_DO_AGAIN)
+                    {
+                        goto refind_start;
+                    }
+                    else
+                    {
+                        return ret;
+                    }
                     break;
                 case SPT_OP_DELETE:
-                    break;
+                    return ret;
                 default:
                     break;
                 }
@@ -2650,19 +2100,27 @@ refind_forward:
             /*insert down*/
             else
             {
-                switch(pqinfo->op){
+                switch(op){
                 case SPT_OP_FIND:
-                    break;
+                    return ret;
                 case SPT_OP_INSERT:
                     st_insert_info.pkey_vec= pcur;
                     st_insert_info.key_val= cur_vec.val;
                     st_insert_info.cmp_pos = cmpres.pos;
                     st_insert_info.fs = cmpres.smallfs;
                     st_insert_info.signpost = signpost;
-                    return do_insert_down_via_r(ppclst, &st_insert_info, pdata);                    
+                    ret = do_insert_down_via_r(ppclst, &st_insert_info, pdata);
+                    if(ret == SPT_DO_AGAIN)
+                    {
+                        goto refind_start;
+                    }
+                    else
+                    {
+                        return ret;
+                    }
                     break;
                 case SPT_OP_DELETE:
-                    break;
+                    return ret;
                 default:
                     break;
                 }
@@ -2670,7 +2128,7 @@ refind_forward:
         }
         else
         {
-            cur_data = -1;
+            cur_data = SPT_INVALID;
             while(fs_pos > startbit)
             {
                 //先删除invalid，但cur是路标还是向量，取next的方法不一致，故需要先区分
@@ -2687,18 +2145,26 @@ refind_forward:
                             pcur = ppre;
                             goto refind_forward;
                         }
-                        switch(pqinfo->op){
+                        switch(op){
                         case SPT_OP_FIND:
-                            break;
+                            return ret;
                         case SPT_OP_INSERT:
                             st_insert_info.pkey_vec= pcur;
                             st_insert_info.key_val= cur_vec.val;
                             st_insert_info.fs = fs_pos;
                             st_insert_info.signpost = signpost;
-                            return do_insert_last_down(ppclst, &st_insert_info, pdata);                            
+                            ret = do_insert_last_down(ppclst, &st_insert_info, pdata);
+                            if(ret == SPT_DO_AGAIN)
+                            {
+                                goto refind_start;
+                            }
+                            else
+                            {
+                                return ret;
+                            }
                             break;
                         case SPT_OP_DELETE:
-                            break;
+                            return ret;
                         default:
                             break;
                         }
@@ -2740,7 +2206,7 @@ refind_forward:
                         {
                             tmp_vec.val = next_vec.val;
                             tmp_vec.valid = SPT_VEC_INVALID;
-                            atomic64_cmpxchg((atomic64_t *)pcur, next_vec.val, tmp_vec.val);
+                            atomic64_cmpxchg((atomic64_t *)pnext, next_vec.val, tmp_vec.val);
                             //set invalid succ or not, refind from cur
                             cur_vec.val = pcur->val;
                             if((cur_vec.valid == SPT_VEC_INVALID))
@@ -2791,7 +2257,7 @@ refind_forward:
                                 else
                                 {
                                     tmp_vec.rd = next_vec.down;
-                                    cur_data = -1;
+                                    cur_data = SPT_INVALID;
                                 }                
                             }
                             else
@@ -2830,19 +2296,27 @@ refind_forward:
                         }
                         else
                         {
-                            switch(pqinfo->op){
+                            switch(op){
                             case SPT_OP_FIND:
-                                break;
+                                return ret;
                             case SPT_OP_INSERT:
                                 signpost = cur_vec.idx << SPT_VEC_SIGNPOST_BIT;
                                 st_insert_info.pkey_vec = pcur;
                                 st_insert_info.key_val= cur_vec.val;
                                 st_insert_info.fs = fs_pos;
                                 st_insert_info.signpost = signpost;
-                                return do_insert_signpost_down(ppclst, &st_insert_info, pdata);
+                                ret = do_insert_rsignpost_down(ppclst, &st_insert_info, pdata);
+                                if(ret == SPT_DO_AGAIN)
+                                {
+                                    goto refind_start;
+                                }
+                                else
+                                {
+                                    return ret;
+                                }
                                 break;
                             case SPT_OP_DELETE:
-                                break;
+                                return ret;
                             default:
                                 break;
                             }
@@ -2911,18 +2385,26 @@ refind_forward:
                 /*insert*/
                 if(fs_pos < startbit + len)
                 {
-                    switch(pqinfo->op){
+                    switch(op){
                     case SPT_OP_FIND:
-                        break;
+                        return ret;
                     case SPT_OP_INSERT:
                         st_insert_info.pkey_vec= pcur;
                         st_insert_info.key_val= cur_vec.val;
                         st_insert_info.fs = fs_pos;
                         st_insert_info.signpost = signpost;
-                        return do_insert_up_via_d(ppclst, &st_insert_info, pdata);                        
+                        ret = do_insert_up_via_d(ppclst, &st_insert_info, pdata);
+                        if(ret == SPT_DO_AGAIN)
+                        {
+                            goto refind_start;
+                        }
+                        else
+                        {
+                            return ret;
+                        }
                         break;
                     case SPT_OP_DELETE:
-                        break;
+                        return ret;
                     default:
                         break;
                     }
@@ -2941,344 +2423,88 @@ refind_forward:
         }
     }
 
-}
-
-
-int insert_data(cluster_head_t **ppclst, char *new_data)
-{
-    u32 cur_data, vecid_cur;
-    spt_vec_t *ppre = NULL;
-    spt_vec_t tmp_vec, cur_vec, pre_vec, *pcur;
-    char *pcur_data;//*ppre_data,
-    u64 startbit, endbit, len, fs_pos, signpost;
+    ret = SPT_OK;
     
-    u8 direction;
-    u64 ret;
-    vec_cmpret_t cmpres;
-    insert_info_t st_insert_info;
-
-    startbit = endbit = 0;
-    signpost = 0;
-    cur_data = SPT_INVALID;
-    pcur = (spt_vec_t *)vec_id_2_ptr(*ppclst, (*ppclst)->vec_head);
-    cur_vec.val = pcur->val;
-    
-    fs_pos = find_fs(new_data, startbit, DATA_BIT_MAX);
-    
-    while(startbit<DATA_BIT_MAX)
+    if(cur_data == SPT_INVALID)//yzx
     {
-        /*首位是1，与pcur_vec->right比*/
-        if(fs_pos == startbit)
+        cur_data = get_data_id(*ppclst, pcur);
+        if(cur_data == SPT_DO_AGAIN)
+            goto refind_start;
+        
+        pcur_data = db_id_2_ptr(*ppclst, cur_data) + sizeof(spt_dhd);
+    }
+    pdh = pcur_data - sizeof(spt_dhd);
+
+    switch(op){
+    case SPT_OP_FIND:
+        return ret;
+    case SPT_OP_INSERT:
+        va_old = pdh->ref;
+        while(1)
         {
-            if(cur_vec.flag == SPT_VEC_FlAG_SIGNPOST)
+            if(va_old < 0)
             {
-                signpost = cur_vec.idx << SPT_VEC_SIGNPOST_BIT;
-                if(direction == SPT_DOWN)
-                {
-                    ///TODO: insert
-                    ppre = pcur;
-                    pre_vec.val = cur_vec.val;            
-                    pcur = (spt_vec_t *)vec_id_2_ptr(*ppclst,pre_vec.rd);
-                    cur_vec = pcur->val;
-                    if(cur_vec.valid != SPT_VEC_INVALID
-                        && cur_vec.flag != SPT_VEC_FlAG_SIGNPOST
-                        && cur_vec.pos == 0)
-                    {
-                        continue;
-                    }
-                    st_insert_info.pkey_vec = ppre;
-                    st_insert_info.key_val= pre_vec.val;
-                    st_insert_info.signpost = signpost;
-                    return do_insert_signpost_right(ppclst, &st_insert_info, new_data);
-                }
-            }
-            if(cur_vec.flag == SPT_VEC_FLAG_DATA 
-                    || (cur_vec.flag == SPT_VEC_FlAG_SIGNPOST 
-                        && cur_vec.ext_sys_flg == SPT_VEC_SYS_FLAG_DATA))
-            {
-                len = DATA_BIT_MAX - startbit;
-                ppre = pcur;
-                pre_vec.val = cur_vec.val;            
-                pcur = NULL;
-                cur_vec = SPT_NULL;
-                direction = SPT_RIGHT;                
+                goto refind_start;
             }
             else
             {
-                ppre = pcur;
-                pre_vec.val = cur_vec.val;            
-                pcur = (spt_vec_t *)vec_id_2_ptr(*ppclst,pre_vec.rd);
-                cur_vec = pcur->val;
-                direction = SPT_RIGHT;
-                while(1)
+                va_new = va_old+1;
+                va_old = atomic_cmpxchg((atomic_t *)&pdh->ref, va_old,va_new);
+                if(va_new == va_old)
+                    break;
+            }
+        }
+        return ret;
+    case SPT_OP_DELETE:
+        va_old = atomic_sub_return(1,(atomic_t *)&pdh->ref);
+        if(va_old >= 0)
+            return ret;
+        else if(va_old == -1)
+        {
+            //delete the only first set data
+            if(ppre == NULL)
+            {
+                tmp_vec.val = cur_vec.val;
+                tmp_vec.rd = SPT_NULL;
+                cur_vec.val = atomic64_cmpxchg((atomic64_t *)pcur, cur_vec.val, tmp_vec.val);
+                if(cur_vec.val == tmp_vec.val)//invalidate succ
                 {
-                    if(cur_vec.valid == SPT_VEC_INVALID)
-                    {
-                        tmp_vec.val = pre_vec.val;
-                        /*一定是从right遍历过来的*/
-                        if(cur_vec.flag == SPT_VEC_FlAG_SIGNPOST)
-                        {
-                            if(cur_vec.ext_sys_flg == SPT_VEC_SYS_FLAG_DATA)
-                            {
-                                spt_set_data_flag(tmp_vec);
-                            }
-                            tmp_vec.rd = cur_vec.rd;
-                        }
-                        else if(cur_vec.flag == SPT_VEC_FLAG_DATA)
-                        {
-                            if(cur_vec.down == SPT_NULL)
-                            {
-                                spt_set_data_flag(tmp_vec);
-                                tmp_vec.rd = cur_vec.rd;
-                            }
-                            else
-                            {
-                                tmp_vec.rd = cur_vec.down;
-                                cur_data = -1;
-                            }                
-                        }
-                        else
-                        {
-                            tmp_vec.rd = cur_vec.rd;
-                        }
-                        vecid_cur = pre_vec.rd;
-                        pre_vec.val = atomic64_cmpxchg((atomic64_t *)ppre, pre_vec.val, tmp_vec.val);
-                        if(pre_vec.val == tmp_vec.val)//delete succ
-                        {
-                            vec_free_to_buf(*ppclst, vecid_cur);
-                        }
-                        /*不论交换成功与否，直接拿新的pre_vec进行判断和处理*/
-                        if(pre_vec.valid == SPT_VEC_INVALID)
-                        {
-                            /*从头再来*/
-                            return SPT_DO_AGAIN;
-                        }
-                        if(pre_vec.flag == SPT_VEC_FLAG_DATA)
-                        {
-                            len = DATA_BIT_MAX - startbit;
-                            break;
-                        }
-                        else if(pre_vec.flag == SPT_VEC_FLAG_RIGHT)
-                        {
-                            pcur = (spt_vec_t *)vec_id_2_ptr(*ppclst,pre_vec.rd);
-                            cur_vec = *pcur;
-                        }                
-                        else if(pre_vec.flag == SPT_VEC_FlAG_SIGNPOST)
-                        {
-                            signpost = pre_vec.idx << SPT_VEC_SIGNPOST_BIT;
-                            if(pre_vec.ext_sys_flg == SPT_VEC_SYS_FLAG_DATA)
-                            {
-                                len = DATA_BIT_MAX - startbit;
-                                break;
-                            }
-                            pcur = (spt_vec_t *)vec_id_2_ptr(*ppclst,pre_vec.rd);
-                            cur_vec = *pcur;
-                        }
-                        else
-                        {
-                            assert(0);
-                            return SPT_ERR;
-                        }
-                    }
-                    else
-                    {
-                        if(cur_vec.flag == SPT_VEC_FlAG_SIGNPOST)
-                        {
-                            len = (cur_vec.idx << SPT_VEC_SIGNPOST_BIT ) - startbit + 1;
-                        }
-                        else
-                        {
-                            len = cur_vec.pos + signpost - startbit + 1;
-                        }
-                        break;
-                    }
-                }                
+                    //free cur_data
+                    db_free_to_buf(*ppclst,cur_data);
+                    return SPT_OK;
+                }
+                else
+                {
+                    atomic_add_return(1,(atomic_t *)&pdh->ref);
+                    goto refind_start;
+                }
 
             }
-            if(cur_data == -1)//yzx
+            tmp_vec.val = cur_vec.val;
+            tmp_vec.valid = SPT_VEC_INVALID;
+            cur_vec.val = atomic64_cmpxchg((atomic64_t *)pcur, cur_vec.val, tmp_vec.val);
+            if(cur_vec.val == tmp_vec.val)//invalidate succ
             {
-                cur_data = get_data_id(*ppclst, pcur);
-                pcur_data = db_id_2_ptr(*ppclst, cur_data);
-            }            
-            ret = diff_identify(new_data, pcur_data, startbit, len, &cmpres);
-            if(ret == 0)
-            {
-                startbit += len;
-                /*find the same record*/
-                if(startbit >= DATA_BIT_MAX)
-                {
-                    break;
-                }
-                ///TODO:startbit already >= DATA_BIT_MAX
-                fs_pos = find_fs(new_data, startbit, DATA_BIT_MAX - startbit);
-                continue;
+                //free cur_data
+                db_free_to_buf(*ppclst,cur_data);
+                op = SPT_OP_FIND;
+                pcur = ppre;
+                goto refind_forward;
             }
-            /*insert up*/
-            else if(ret > 0)
-            {
-                st_insert_info.pkey_vec= ppre;
-                st_insert_info.key_val= pre_vec.val;
-                st_insert_info.cmp_pos = cmpres.pos;
-                st_insert_info.fs = cmpres.smallfs;
-                st_insert_info.signpost = signpost;
-                return do_insert_up_via_r(ppclst, &st_insert_info, new_data);
-            }
-            /*insert down*/
             else
             {
-                st_insert_info.pkey_vec= ppre;
-                st_insert_info.key_val= pre_vec.val;
-                st_insert_info.cmp_pos = cmpres.pos;
-                st_insert_info.fs = cmpres.smallfs;
-                st_insert_info.signpost = signpost;
-                return do_insert_down_via_r(ppclst, &st_insert_info, new_data);
-            }        
+                atomic_add_return(1,(atomic_t *)&pdh->ref);
+                goto refind_start;
+            }
+            return ret;
         }
         else
         {
-            cur_data = -1;
-            
-            while(fs_pos > startbit)
-            {
-                ppre = pcur;
-                pre_vec.val = cur_vec.val;
-                if(pre_vec.flag == SPT_VEC_FlAG_SIGNPOST)
-                {
-                    signpost = cur_vec.idx << SPT_VEC_SIGNPOST_BIT;
-                    if(direction == SPT_RIGHT)
-                    {
-                        pcur = (spt_vec_t *)vec_id_2_ptr(*ppclst,pre_vec.rd);
-                        cur_vec = pcur->val;
-                        if(cur_vec.valid != SPT_VEC_INVALID
-                            && cur_vec.flag != SPT_VEC_FlAG_SIGNPOST
-                            && cur_vec.pos == 0)
-                        {
-                            continue;
-                        }
-                        st_insert_info.pkey_vec = ppre;
-                        st_insert_info.key_val= pre_vec.val;
-                        st_insert_info.fs = fs_pos;
-                        st_insert_info.signpost = signpost;
-                        return do_insert_signpost_down(ppclst, &st_insert_info, new_data);
-                    }
-                    if(pre_vec.rd == SPT_NULL)
-                    {
-                        st_insert_info.pkey_vec= ppre;
-                        st_insert_info.key_val= pre_vec.val;
-                        st_insert_info.fs = fs_pos;
-                        st_insert_info.signpost = signpost;
-                        return do_insert_last_down(ppclst, &st_insert_info, new_data);
-                    }
-                    else
-                    {
-                        pcur = (spt_vec_t *)vec_id_2_ptr(*ppclst,pre_vec.rd);
-                    }
-                }
-                else
-                {
-                    if(pre_vec.down == SPT_NULL)
-                    {
-                        st_insert_info.pkey_vec= ppre;
-                        st_insert_info.key_val= pre_vec.val;
-                        st_insert_info.fs = fs_pos;
-                        st_insert_info.signpost = signpost;
-                        return do_insert_last_down(ppclst, &st_insert_info, new_data);
-                    }
-                    else
-                    {
-                        pcur = (spt_vec_t *)vec_id_2_ptr(*ppclst,pre_vec.down);
-                    }
-                }
-                cur_vec = pcur->val;
-                direction = SPT_DOWN;
-                while(cur_vec.valid == SPT_VEC_INVALID)
-                {
-                    tmp_vec.val = pre_vec.val;
-                    /*一定是从down遍历过来的*/
-                    if(pre_vec.flag == SPT_VEC_FlAG_SIGNPOST)
-                    {
-                        if(cur_vec.flag == SPT_VEC_FlAG_SIGNPOST)
-                        {
-                            tmp_vec.rd = cur_vec.rd;
-                        }
-                        else
-                        {
-                            tmp_vec.rd = cur_vec.down;
-                        }
-                        vecid_cur = pre_vec.rd;
-                    }
-                    else
-                    {
-                        if(cur_vec.flag == SPT_VEC_FlAG_SIGNPOST)
-                        {
-                            tmp_vec.down = cur_vec.rd;
-                        }
-                        else
-                        {
-                            tmp_vec.down = cur_vec.down;
-                        }
-                        vecid_cur = pre_vec.down;
-                    }
-                    pre_vec.val = atomic64_cmpxchg((atomic64_t *)ppre, pre_vec.val, tmp_vec.val);
-                    if(pre_vec.val == tmp_vec.val)//delete succ
-                    {
-                        vec_free_to_buf(*ppclst, vecid_cur);
-                    }                    
-                    /*不论交换成功与否，直接拿新的pre_vec进行判断和处理*/
-                    if(pre_vec.valid == SPT_VEC_INVALID)
-                    {
-                        /*从头再来*/
-                        return SPT_DO_AGAIN;
-                    }
-                    /*insert last down*/
-                    if(pre_vec.flag == SPT_VEC_FlAG_SIGNPOST)
-                    {
-                        if(pre_vec.rd == SPT_NULL)
-                        {
-                            st_insert_info.pkey_vec= ppre;
-                            st_insert_info.key_val= pre_vec.val;
-                            st_insert_info.fs = fs_pos;
-                            st_insert_info.signpost = signpost;
-                            return do_insert_last_down(ppclst, &st_insert_info, new_data);
-                        }
-                    }
-                    else
-                    {
-                        if(pre_vec.down == SPT_NULL)
-                        {
-                            st_insert_info.pkey_vec= ppre;
-                            st_insert_info.key_val= pre_vec.val;
-                            st_insert_info.fs = fs_pos;
-                            st_insert_info.signpost = signpost;
-                            return do_insert_last_down(ppclst, &st_insert_info, new_data);
-                        }
-                    }
-                    pcur = (spt_vec_t *)vec_id_2_ptr(*ppclst,pre_vec.down);
-                    cur_vec = pcur->val;
-                }
-                if(cur_vec.flag == SPT_VEC_FlAG_SIGNPOST)
-                {
-                    len = (cur_vec.idx << SPT_VEC_SIGNPOST_BIT ) - startbit + 1;
-                }
-                else
-                {
-                    len = cur_vec.pos + signpost - startbit + 1;
-                }
-                /*insert*/
-                if(fs_pos < startbit + len)
-                {
-                    st_insert_info.pkey_vec= ppre;
-                    st_insert_info.key_val= pre_vec.val;
-                    st_insert_info.fs = fs_pos;
-                    st_insert_info.signpost = signpost;
-                    return do_insert_up_via_d(ppclst, &st_insert_info,new_data);
-                }
-                startbit += len;
-            }
-            assert(fs_pos == startbit);
+            return SPT_NOT_FOUND;
         }
+    default:
+        break;
     }
-
 }
 
 #ifdef _BIG_ENDIAN
