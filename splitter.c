@@ -223,118 +223,6 @@ u64 ucfind_firt_set(u8 byte)
 
     return 8;
 }
-/*获取dataid需要向右遍历，遍历过程中遇到invalid结点即进行处理，
-    处理时，若invalid结点的pre也成为invalid，需要继续往前回溯，直接返回失败*/
-int get_data_id(cluster_head_t *pclst, spt_vec_t* pvec)
-{
-    spt_vec_t *ppre = NULL;
-    spt_vec_t tmp_vec, cur_vec, pre_vec;
-    u64 ret;
-    u32 vecid_cur;
-    
-    cur_vec.val = pvec->val;
-
-    while(1)
-    {
-        if(cur_vec.valid == SPT_VEC_INVALID)
-        {
-            if(ppre == NULL)
-            {
-                return SPT_INVALID;
-            }
-            tmp_vec.val = pre_vec.val;
-            /*一定是从right遍历过来的*/
-            if(cur_vec.flag == SPT_VEC_FlAG_SIGNPOST)
-            {
-                if(cur_vec.ext_sys_flg == SPT_VEC_SYS_FLAG_DATA)
-                {
-                    spt_set_data_flag(tmp_vec);
-                }
-                tmp_vec.rd = cur_vec.rd;
-            }
-            else if(cur_vec.flag == SPT_VEC_FLAG_DATA)
-            {
-                if(cur_vec.down == SPT_NULL)
-                {
-                    spt_set_data_flag(tmp_vec);
-                    tmp_vec.rd = cur_vec.rd;
-                }
-                else
-                {
-                    tmp_vec.rd = cur_vec.down;
-                }                
-            }
-            else
-            {
-                tmp_vec.rd = cur_vec.rd;
-            }
-            vecid_cur = pre_vec.rd;
-            pre_vec.val = atomic64_cmpxchg((atomic64_t *)ppre, pre_vec.val, tmp_vec.val);
-            if(pre_vec.val == tmp_vec.val)//delete succ
-            {
-                vec_free_to_buf(pclst, vecid_cur);
-            }          
-            /*不论交换成功与否，直接拿新的pre_vec进行判断和处理*/
-            if(pre_vec.valid == SPT_VEC_INVALID)
-            {
-                return SPT_INVALID;
-            }
-            if(pre_vec.flag == SPT_VEC_FLAG_DATA)
-            {
-                return pre_vec.rd;
-            }
-            else if(pre_vec.flag == SPT_VEC_FLAG_RIGHT)
-            {
-                pvec = (spt_vec_t *)vec_id_2_ptr(pclst,pre_vec.rd);
-                cur_vec = *pvec;
-            }                
-            else if(pre_vec.flag == SPT_VEC_FlAG_SIGNPOST)
-            {
-                if(pre_vec.ext_sys_flg == SPT_VEC_SYS_FLAG_DATA)
-                {
-                    return pre_vec.rd;
-                }
-                pvec = (spt_vec_t *)vec_id_2_ptr(pclst,pre_vec.rd);
-                cur_vec = *pvec;
-            }
-            else
-            {
-                assert(0);
-                return SPT_INVALID;
-            }
-        }
-        else
-        {
-            if(cur_vec.flag == SPT_VEC_FLAG_DATA)
-            {
-                return cur_vec.rd;
-            }
-            else if(cur_vec.flag == SPT_VEC_FLAG_RIGHT)
-            {
-                ppre = pvec;
-                pre_vec = cur_vec;
-                pvec = (spt_vec_t *)vec_id_2_ptr(pclst,cur_vec.rd);
-                cur_vec = *pvec;                
-            }            
-            else if(cur_vec.flag == SPT_VEC_FlAG_SIGNPOST)
-            {
-                if(cur_vec.ext_sys_flg == SPT_VEC_SYS_FLAG_DATA)
-                {
-                    return cur_vec.rd;
-                }
-                ppre = pvec;
-                pre_vec = cur_vec;
-                pvec = (spt_vec_t *)vec_id_2_ptr(pclst,cur_vec.rd);
-                cur_vec = *pvec;                
-            }
-            else
-            {
-                assert(0);
-                return SPT_INVALID;
-            }            
-        }
-    }
-}
 
 int get_data_id(cluster_head_t *pclst, spt_vec_t* pvec)
 {
@@ -614,488 +502,6 @@ get_id_start:
     }
 
 }
-
-/*有可能在最右边增加一个向量(rdn记录d变成记录r);也有可能非最右侧向量通过合并变成最右侧向量，并且改变dataid*/
-/**/
-/*几种情况说明:
-    1.pos不为0时，如果同时也修改dataid，则忽略dataid的修改
-    2.a.right修改为空 b.pos修改为0 c.pvec_r->data不为SPT_INVALID,
-      要么abc同时出现；要么c单独出现时，ab本来就是空和0.
-      
-    3.
-    */
-int modify_vec(cluster_head_t **ppclst, spt_vec_t *pvec, spt_vec_t_r *pvec_r)
-{
-    u64 pos;
-    int multi;
-    int i=0;
-    u32 tmpid=0;
-    u32 free_head;
-    spt_vec_t *ptmp, *pprev, *ptail, *pnew_tail;
-    unsigned int down;
-    unsigned int rdn;
-    unsigned int flag;
-
-    /*最常见情况单独出来
-        1.原向量不是链，只修改rdn或down(任一或者都修改)
-        2.原向量不是链，且pos的新值小于256。
-    */
-    if(!spt_nlst_is_set(pvec->flag))
-    {
-        if(pvec_r->pos != SPT_INVALID)
-        {
-            if(pvec_r->pos <= SPT_VEC_POS_MULTI_MASK)
-            {
-                pvec->pos = pvec_r->pos;
-                if(pvec->pos == 0)
-                {
-                    assert(pvec_r->right == SPT_NULL);
-                    assert(pvec_r->data != SPT_INVALID);
-                    pvec->rdn = pvec_r->data;
-                    spt_set_data_flag(pvec->flag);                    
-                }
-                else
-                {
-                    if(pvec_r->right != SPT_INVALID)
-                    {
-                        assert(pvec_r->right != SPT_NULL);
-                        pvec->rdn = pvec_r->right;
-                        spt_set_right_flag(pvec->flag);
-                    }
-                    /*忽略对dataid的修改*/
-                }
-                if(pvec_r->down != SPT_INVALID)
-                {
-                    pvec->down = pvec_r->down;
-                }
-                return SPT_OK;
-            }
-        }
-        else/*不修改pos*/
-        {
-            if(pvec_r->down != SPT_INVALID)
-            {
-                pvec->down = pvec_r->down;
-            }
-            if(pvec_r->right != SPT_INVALID)
-            {
-                /*如果修改right为空，必然需要修改pos为0；如果pos本身就为0，right必为0，不需要修改它为空*/
-                assert(pvec_r->right != SPT_NULL);
-                pvec->rdn = pvec_r->right;
-                spt_set_right_flag(pvec->flag);
-            }
-            /**/
-            if(pvec_r->data != SPT_INVALID && pvec->pos == 0)
-            {
-                pvec->rdn = pvec_r->data;
-                spt_set_data_flag(pvec->flag);
-            }
-            return SPT_OK;
-        }
-        #if 0
-        if(pvec_r->pos != SPT_INVALID)
-        {
-            if(pvec_r->pos <= SPT_VEC_POS_MULTI_MASK)
-            {
-                pvec->pos = pvec_r->pos;
-                if(pvec_r->down != SPT_INVALID)
-                {
-                    pvec->down = pvec_r->down;
-                }
-                
-                if(pvec_r->right != SPT_INVALID)
-                {    
-                    if(pvec_r->right == SPT_NULL)
-                    {
-                        assert(pvec->pos == 0);
-                        assert(pvec_r->data != SPT_INVALID);
-
-                        pvec->rdn = pvec_r->data;
-                        spt_set_data_flag(pvec->flag);
-                    }
-                    else
-                    {
-                        pvec->rdn = pvec_r->right;
-                        spt_set_right_flag(pvec->flag);
-                    }
-                }
-                else if(pvec_r->data != SPT_INVALID)
-                {
-                    pvec->rdn = pvec_r->data;
-                    assert(pvec->flag == 0);
-                }
-                return SPT_OK;
-            }
-        }
-        else
-        {
-            if(pvec_r->down != SPT_INVALID)
-            {
-                pvec->down = pvec_r->down;
-            }
-            if(pvec_r->right != SPT_INVALID)
-            {
-                pvec->rdn = pvec_r->right;
-                spt_set_right_flag(pvec->flag);
-            }
-            if(pvec_r->data != SPT_INVALID)
-            {
-                if(pvec->flag != 0)
-                {
-                    assert(0);
-                    printf("\r\n%d\t%s", __LINE__, __FUNCTION__);
-                    return SPT_ERR;
-                }
-                pvec->rdn = pvec_r->data;
-            }            
-            return SPT_OK;
-        }
-        #endif
-    }
-    /*到这里pvec肯定是链*/
-    ptmp = pvec;
-    pos = pvec_r->pos;
-    pprev = 0;
-    ptail = 0;
-    
-    if(pos != SPT_INVALID)
-    {
-        while(pos != 0)
-        {
-            multi = pos & SPT_VEC_POS_MULTI_MASK;
-            if(multi != 0)
-            {
-                if(ptail != 0)
-                {
-                    tmpid = vec_alloc(ppclst, &ptmp);
-                    if(ptmp == 0)
-                    {
-                        /*yzx释放资源， 申请新块，拆分*/
-                        return CLT_NOMEM;
-                    }
-                    ptmp->flag = 0;
-                    spt_set_pos(ptmp->pos, i, multi);
-                    pprev->rdn = tmpid;
-                    spt_set_vec_nlst(pprev->flag);
-                    pprev = ptmp;
-                }
-                else
-                {    
-                    spt_set_pos(ptmp->pos, i, multi);
-
-                    if(!spt_nlst_is_set(ptmp->flag))
-                    {
-                        ptail = ptmp;
-                        down = ptail->down;
-                        rdn = ptail->rdn;
-                        flag = ptail->flag;
-                    }
-                    else
-                    {
-                        pprev = ptmp;
-                        tmpid = ptmp->rdn;
-                        ptmp = (spt_vec_t *)vec_id_2_ptr(*ppclst,tmpid);                
-                    }
-                }
-            }    
-            i++;
-            pos = pos >> SPT_VEC_POS_INDEX_BIT;
-        }
-
-        /*原始串没有到尾部，找到尾记录down和rdn值，并free pvec剩余的串*/
-        if(ptail == 0)
-        {
-            if(pvec_r->pos == 0)
-            {
-                pvec->pos = 0;
-                pnew_tail = pvec;
-                free_head = tmpid = ptmp->rdn;
-                ptmp = (spt_vec_t *)vec_id_2_ptr(*ppclst,tmpid);    
-
-            }
-            else
-            {
-                free_head = tmpid;
-                pnew_tail = pprev;
-            }
-            while(spt_nlst_is_set(ptmp->flag))
-            {
-                tmpid = ptmp->rdn;
-                ptmp = (spt_vec_t *)vec_id_2_ptr(*ppclst,tmpid);
-            }
-            down = ptmp->down;
-            rdn = ptmp->rdn;
-            flag = ptmp->flag;
-            vec_list_free(*ppclst, free_head);
-        }
-        else
-        {
-            pnew_tail = ptmp;
-        }    
-        pnew_tail->down = (pvec_r->down == SPT_INVALID) ?  down:pvec_r->down;
-
-        if(pvec_r->pos == 0)
-        {
-            assert(pvec_r->right == SPT_NULL);
-            assert(pvec_r->data != SPT_INVALID);
-            pnew_tail->rdn = pvec_r->data;
-            spt_set_data_flag(pnew_tail->flag);                    
-        }
-        else
-        {
-            if(pvec_r->right != SPT_INVALID)
-            {
-                assert(pvec_r->right != SPT_NULL);
-                pnew_tail->rdn = pvec_r->right;
-                spt_set_right_flag(pnew_tail->flag);
-            }
-            else
-            {
-                pnew_tail->rdn = rdn;
-                pnew_tail->flag = flag;
-            }
-            /*忽略对dataid的修改*/
-        }            
-        #if 0
-        /*有可能是修改right，也有可能是右侧新增了一个向量，rdn由记录d变成了记录r*/
-        if(pvec_r->right != SPT_INVALID)
-        {
-            pnew_tail->rdn = pvec_r->right;
-            spt_set_right_flag(pnew_tail->flag);
-        }
-        else
-        {
-            pnew_tail->rdn = rdn;
-            pnew_tail->flag = flag;
-        }
-        if(pvec_r->data != SPT_INVALID)
-        {
-            if(pnew_tail->flag != 0)
-            {
-                assert(0);
-                printf("\r\n%d\t%s", __LINE__, __FUNCTION__);
-                return SPT_ERR;
-            }
-            pnew_tail->rdn = pvec_r->data;
-        }
-        #endif
-        return SPT_OK;
-    }
-    /*到这里pos肯定不为0*/
-    else/*不论是修改其它的什么项，都需要先找到tail*/
-    {
-        while(spt_nlst_is_set(ptmp->flag))
-        {
-            tmpid = ptmp->rdn;
-            ptmp = (spt_vec_t *)vec_id_2_ptr(*ppclst,tmpid);
-        }
-        down = ptmp->down;
-        rdn = ptmp->rdn;
-        flag = ptmp->flag;
-        pnew_tail = ptmp;
-    }
-    if(pvec_r->down != SPT_INVALID)
-    {
-        pnew_tail->down = pvec_r->down;
-    }
-    if(pvec_r->right != SPT_INVALID)
-    {
-        assert(pvec_r->right != SPT_NULL);
-        pnew_tail->rdn = pvec_r->right;
-        spt_set_right_flag(pnew_tail->flag);
-    }
-    /*pos肯定不为0, 忽略对dataid的修改*/
-    #if 0
-    else
-    {
-        pnew_tail->rdn = rdn;
-        pnew_tail->flag = flag;
-    }
-    #endif
-    return SPT_OK;    
-}
-
-int construct_vec_new(cluster_head_t **ppclst, spt_vec_t_r *pvec_r, spt_vec_t **pret_vec)
-{
-    u64 pos;
-    int multi;
-    int i=0;
-    u32 vec, vec_h;
-    spt_vec_t *pvec_p, *pvec;
-
-    pos = pvec_r->pos;
-    if(pos == 0)
-    {
-        vec = vec_alloc(ppclst, &pvec);
-        if(pvec == 0)
-        {
-            /*yzx释放资源， 申请新块，拆分*/
-            *pret_vec = NULL;
-            return SPT_NULL;
-        }
-        pvec->pos = 0;
-        *pret_vec = pvec;
-        vec_h = vec;
-    }
-    else
-    {
-        pvec_p = 0;    
-        do
-        {
-            multi = pos & SPT_VEC_POS_MULTI_MASK;
-            if(multi != 0)
-            {
-                vec = vec_alloc(ppclst, &pvec);
-                if(pvec == 0)
-                {
-                    /*yzx释放资源， 申请新块，拆分*/
-                    *pret_vec = NULL;
-                    return SPT_NULL;
-                }
-                if(pvec_p == 0)
-                {
-                    *pret_vec = pvec;
-                    vec_h = vec;
-                }
-                else
-                {
-                    pvec_p->rdn = vec;
-                    spt_set_vec_nlst(pvec_p->flag);
-                }
-                spt_set_pos(pvec->pos, i, multi);
-                pvec_p = pvec;
-
-            }
-            i++;
-        }while((pos = pos >> SPT_VEC_POS_INDEX_BIT) != 0);
-    }
-
-    pvec->down = pvec_r->down;
-    if(pvec_r->right != SPT_NULL)
-    {
-        pvec->rdn = pvec_r->right;
-        spt_set_right_flag(pvec->flag);
-    }
-    else
-    {
-        assert(pvec_r->pos == 0);
-        pvec->rdn = pvec_r->data;
-        spt_set_data_flag(pvec->flag);
-    }
-
-    return vec_h;
-}
-
-int get_modify_auth()
-{
-    return 1;
-}
-
-void do_modify(cluster_head_t **ppclst, spt_md_entirety *pent)
-{
-    spt_md_vec_t *ptmp_md_vec, *pcur_md_vec;
-    spt_free_vec_node *pcur_free_node, *ptmp_free_node;
-    spt_del_data_node *ptmp_del_data, *pcur_del_data;
-    spt_vec_t *pcur_vec;
-
-    /*1.插入时，新增向量都是提前申请好；删除时，待释放的向量数>=修改pos带来的新增向量数*/
-    /*2.先释放向量，同一时刻只有一个线程能修改过滤器结构，且只有修改的时候会申请释放向量*/
-    /*综合1和2，修改必定成功*/
-    pcur_free_node = pent->free_head;
-    while(pcur_free_node != NULL)
-    {
-        ptmp_free_node = pcur_free_node;
-        vec_list_free(*ppclst, pcur_free_node->id);
-        pcur_free_node = pcur_free_node->next;
-        free(ptmp_free_node);
-    }
-
-    pcur_md_vec = pent->md_head;
-    while(pcur_md_vec != NULL)
-    {
-        ptmp_md_vec = pcur_md_vec;
-        if(pcur_md_vec->vec_id == SPT_NULL)
-        {
-            (*ppclst)->vec_head = pcur_md_vec->value.down;
-        }
-        else
-        {
-            pcur_vec = (spt_vec_t *)vec_id_2_ptr(*ppclst, pcur_md_vec->vec_id);
-            modify_vec(ppclst, pcur_vec, &pcur_md_vec->value);
-        }
-        pcur_md_vec = pcur_md_vec->next;
-        free(ptmp_md_vec);    
-    }
-    
-    pcur_del_data = pent->del_head;
-    while(pcur_del_data != NULL)
-    {
-        ptmp_del_data = pcur_del_data;
-        db_free(*ppclst, pcur_del_data->id);
-        pcur_del_data = pcur_del_data->next;
-        free(ptmp_del_data);
-    }
-
-}
-
-#if 0
-/*startbit 在a指向的字节范围内*/
- u64 stfind_first_set(char *a,  u8 startbit, char *end)
-{
-    int perbyteCnt,perllCnt;
-    u8 bitstart, uca;
-    u64 ulla, zCnt, fs;
-
-    zCnt = 0;
-    if(startbit != 0)
-    {
-        uca = *a << startbit >> startbit;a++;
-        if((zCnt = ucfind_firt_set(uca)) < 8)
-        {
-            return zCnt;
-        }
-    }
-
-    if(a%8 != 0)
-    {
-        perbyteCnt = 8-a%8;
-        while(perbyteCnt > 0)
-        {
-            uca = *a; a++;
-            if((fs = ucfind_firt_set(uca)) < 8)
-            {
-                return zCnt+fs;
-            }
-            
-            zCnt += 8;
-        }
-    }
-    
-    perllCnt = (end - a)/8;
-
-    while (perllCnt > 0)
-    {
-        ulla = *(u64 *)a;a += 8;
-        if((fs = ullfind_firt_set(ulla)) < 64)
-        {
-            return zCnt+fs;
-        }
-        zCnt += 64;
-        perllCnt--;
-    }
-    while(a < end)
-    {
-        uca = *a; a++;
-        if((fs = ucfind_firt_set(uca)) < 8)
-        {
-            return zCnt+fs;
-        }
-        zCnt += 8;
-    }
-
-    return zCnt;
-}
-#endif
 
 int do_insert_dsignpost_right(cluster_head_t **ppclst, insert_info_t *pinsert, char *new_data)
 {
@@ -3880,6 +3286,65 @@ int diff_identify(char *a, char *b,u64 start, u64 len, vec_cmpret_t *result)
 }
 #endif
 
+spt_thrd_t *g_thrd_h;
+
+spt_thrd_t *spt_thread_init(int thread_num)
+{
+    g_thrd_h = malloc(sizeof(spt_thrd_t));
+    if(g_thrd_h == NULL)
+    {
+        spt_debug("OOM\r\n");
+        return NULL;
+    }
+    g_thrd_h->pfree_q = lfo_q_init(thread_num);
+    if(g_thrd_h->pfree_q == NULL)
+    {
+        free(g_thrd_h);
+        return NULL;
+    }
+    g_thrd_h->free_q_idx = 0;
+    g_thrd_h->free_q_bidx = 0;
+    g_thrd_h->thrd_idx = 0;
+    g_thrd_h->thrd_total= thread_num;
+    return g_thrd_h;
+}
+
+void spt_thread_start()
+{
+    atomic_add(1, (atomic_t *)&g_thrd_h->thrd_idx);
+}
+
+void spt_thread_exit(int thread)
+{
+    u32 thrd_idx, freeid, type;
+    u64 safe_idx, begin_idx, idx, cmd;
+
+    safe_idx = g_thrd_h->free_q_idx;
+    thrd_idx = atomic_sub_return(1, (atomic_t *)&g_thrd_h->thrd_idx);
+
+    if(thrd_idx > 0)
+    {
+        return;
+    }
+    begin_idx = atomic64_xchg((atomic64_t *)&g_thrd_h->free_q_bidx, safe_idx);
+    for(idx=begin_idx; idx<safe_idx; idx++)
+    {
+        cmd = lfo_deq(g_thrd_h->pfree_q, thread, idx);
+        type = cmd >> 32;
+        freeid = cmd & SPT_PTR_MASK;
+        if(type == SPT_PTR_VEC)
+        {
+            vec_free(pgclst, freeid);
+        }
+        else
+        {
+            db_free(pgclst, freeid);
+        }
+    }
+    return;
+}
+
+
 void debug_print_2(u8 *p, u32 size)
 {
     u8 data, k;
@@ -3909,12 +3374,6 @@ void debug_vec_print(spt_vec_t_r *pvec_r, int vec_id)
 
 void debug_id_vec_print(cluster_head_t *pclst, int id)
 {
-    spt_vec_t *pcur_vec;
-    spt_vec_t_r st_vec_r;
-    
-    pcur_vec = (spt_vec_t *)vec_id_2_ptr(pclst, id);
-    get_final_vec(pclst, pcur_vec, &st_vec_r, -1);
-    debug_vec_print(&st_vec_r, id);
     return;
 }
 

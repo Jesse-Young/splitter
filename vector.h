@@ -1,6 +1,7 @@
 #ifndef _SPLITTER_VECTOR_H
 #define _SPLITTER_VECTOR_H
 
+#include <lf_order.h>
 
 typedef unsigned char u8;
 typedef unsigned char u8;
@@ -9,6 +10,11 @@ typedef unsigned int u32;
 typedef unsigned long long u64;
 typedef long long s64;
 
+
+///////////
+#define SPT_PTR_MASK        (0x00000000fffffffful)
+#define SPT_PTR_VEC         (0)
+#define SPT_PTR_DATA        (1)
 ////////////////////////////////////////
 #define SPT_VEC_FLAG_RIGHT      0
 #define SPT_VEC_FLAG_DATA       1
@@ -18,6 +24,7 @@ typedef long long s64;
 #define SPT_VEC_INVALID     1     
 
 #define SPT_VEC_SIGNPOST_BIT    14
+
 #define SPT_VEC_SIGNPOST_MASK   ((1ul<<SPT_VEC_SIGNPOST_BIT)-1)
 
 ///////////////////////////////
@@ -40,6 +47,15 @@ typedef long long s64;
 #define spt_set_data_flag(x)        (x.flag = SPT_VEC_FLAG_DATA)
 
 
+typedef struct 
+{
+    orderq_h_t *pfree_q;
+    volatile u64 free_q_idx;
+    volatile u64 free_q_bidx;
+    volatile u32 thrd_total;
+    volatile u32 thrd_idx;
+}spt_thrd_t;
+
 typedef struct chunk_head
 {
     unsigned short vec_head;
@@ -51,15 +67,9 @@ typedef struct chunk_head
 typedef struct cluster_head
 {
     int vec_head;
-    int up_dataid;
-    int down_dataid;
     volatile unsigned int vec_free_head;
-    volatile unsigned int blk_free_head;
     volatile unsigned int dblk_free_head;
 
-    volatile unsigned int vec_buf_head;
-    volatile unsigned int dblk_buf_head;
-    
     unsigned int pg_num_max;
     unsigned int pg_num_total;
     unsigned int pg_cursor;

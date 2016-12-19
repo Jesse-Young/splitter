@@ -490,43 +490,28 @@ void vec_free(cluster_head_t *pcluster, int id)
 
     return ;
 }
-
-void vec_free_to_buf(cluster_head_t *pcluster, int id)
+/*cluster以后用到，当前只有一个cluster*/
+void vec_free_to_buf(cluster_head_t *pcluster, int id, int thread_id)
 {
-    vec_head_t *pvec;
-    u32 old_head;
+    u64 cmd, q_idx;
 
-    pvec = (vec_head_t *)vec_id_2_ptr(pcluster,id);
-    do
-    {
-        old_head = pcluster->vec_buf_head;
-        pvec->next = old_head;
-        
-    }while(id != atomic_cmpxchg((atomic_t *)&pcluster->vec_buf_head, old_head, id));
-///TODO:    
-    atomic_add(1, (atomic_t *)&pcluster->free_vec_cnt);
-    atomic_sub(1, (atomic_t *)&pcluster->used_vec_cnt);
+    cmd = id;
+    q_idx = atomic64_add_return(1, (atomic64_t *)&g_thrd_h->free_q_idx)-1;
 
+    lfo_inq(g_thrd_h->pfree_q, thread_id, cmd, q_idx);
     return ;
 
 }
 
-void db_free_to_buf(cluster_head_t *pcluster, int id)
+void db_free_to_buf(cluster_head_t *pcluster, int id, int thread_id)
 {
-    db_head_t *pdb;
-    u32 old_head;
-    
-    pdb = (db_head_t *)db_id_2_ptr(pcluster,id);
-    do
-    {
-        old_head = pcluster->dblk_buf_head;
-        pdb->next = old_head;
-        
-    }while(id != atomic_cmpxchg((atomic_t *)&pcluster->dblk_buf_head, old_head, id));
-///TODO:    
-    atomic_add(1, (atomic_t *)&pcluster->free_dblk_cnt);
-    atomic_sub(1, (atomic_t *)&pcluster->used_dblk_cnt);
+    u64 cmd, q_idx;
 
+    cmd = (SPT_PTR_DATA << 32) | id;
+    q_idx = atomic64_add_return(1, (atomic64_t *)&g_thrd_h->free_q_idx)-1;
+
+    lfo_inq(g_thrd_h->pfree_q, thread_id, cmd, q_idx);
+    return ;
 }
 
 void test_p()
