@@ -7,16 +7,6 @@
 #ifndef _SPLITTER_CLUSTER_H
 #define _SPLITTER_CLUSTER_H
 
-#define SPT_NULL         (-1)
-#define SPT_INVALID        (-2)
-
-#define SPT_DIR_START        0
-#define SPT_RIGHT        1
-#define SPT_DOWN         2
-
-#define SPT_OP_FIND     1
-#define SPT_OP_DELETE   2
-#define SPT_OP_INSERT   3
 
 
 /*为计算效率，blk大小为2的整数次幂*/
@@ -27,7 +17,7 @@
 #define BLK_BITS 5
 #define BLK_SIZE (1<<BLK_BITS)
 
-#define CLST_NDIR_PGS          320        //how much
+#define CLST_NDIR_PGS 320        //how much
 
 #if 0
 #define CLST_IND_PGS_BITS        6
@@ -35,9 +25,9 @@
 #define CLST_TIND_PGS_BITS        4
 #endif
 //两级间接寻址即可寻址1G范围，远超64M的簇大小限制。
-#define CLST_IND_PG            (CLST_NDIR_PGS)    //index
-#define CLST_DIND_PG        (CLST_IND_PG+1)    //index
-#define CLST_N_PGS            (CLST_DIND_PG+1)//pclst->pglist[] max
+#define CLST_IND_PG (CLST_NDIR_PGS)    //index
+#define CLST_DIND_PG (CLST_IND_PG+1)    //index
+#define CLST_N_PGS (CLST_DIND_PG+1)//pclst->pglist[] max
 
 
 //#define CLST_TIND_PGS        (CLST_DIND_PGS+1)
@@ -136,6 +126,18 @@ extern char* db_id_2_ptr(cluster_head_t *pclst, unsigned int id);
 extern char* vec_id_2_ptr(cluster_head_t *pclst, unsigned int id);
 #endif
 
+#define SPT_NULL -1
+#define SPT_INVALID -2
+
+#define SPT_DIR_START 0
+#define SPT_RIGHT 1
+#define SPT_DOWN 2
+
+#define SPT_OP_FIND 1
+#define SPT_OP_DELETE 2
+#define SPT_OP_INSERT 3
+
+
 #define CLT_FULL 3
 #define CLT_NOMEM 2
 #define CLT_ERR 1
@@ -147,7 +149,9 @@ extern char* vec_id_2_ptr(cluster_head_t *pclst, unsigned int id);
 
 unsigned int db_alloc(cluster_head_t **ppcluster, char **db);
 cluster_head_t * cluster_init();
-
+void vec_free_to_buf(cluster_head_t *pcluster, int id, int thread_id);
+void db_free_to_buf(cluster_head_t *pcluster, int id, int thread_id);
+void test_vec_alloc_n_times(cluster_head_t **ppclst);
 
 #endif
 

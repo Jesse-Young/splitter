@@ -202,6 +202,17 @@ typedef struct {
 } atomic64_t;
 
 /**
+ * atomic_read - read atomic variable
+ * @v: pointer of type atomic_t
+ *
+ * Atomically reads the value of @v.
+ */
+static inline int atomic_read(const atomic_t *v)
+{
+	return (*(volatile int *)&(v)->counter);
+}
+
+/**
  * atomic_add - add integer to atomic variable
  * @i: integer value to add
  * @v: pointer of type atomic_t
@@ -262,6 +273,19 @@ static inline int atomic_cmpxchg(atomic_t *v, int old, int new)
 static inline int atomic_xchg(atomic_t *v, int new)
 {
 	return xchg(&v->counter, new);
+}
+
+
+/**
+ * atomic64_read - read atomic64 variable
+ * @v: pointer of type atomic64_t
+ *
+ * Atomically reads the value of @v.
+ * Doesn't imply a read memory barrier.
+ */
+static inline long atomic64_read(const atomic64_t *v)
+{
+	return (*(volatile long *)&(v)->counter);
 }
 
 
@@ -361,7 +385,7 @@ static inline long atomic64_xchg(atomic64_t *v, long new)
 }
 
 
-static unsigned long long rdtsc()
+static inline unsigned long long rdtsc()
 {
     unsigned int lo,hi;
     asm volatile

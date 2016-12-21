@@ -9,8 +9,10 @@
 #include <malloc.h>
 #include <string.h>
 #include <assert.h>
+#include <atomic_user.h>
 #include <vector.h>
 #include <chunk.h>
+#include <lf_order.h>
 
 #if 1 //for test
 char* blk_id_2_ptr(cluster_head_t *pclst, unsigned int id)
@@ -26,21 +28,51 @@ char* blk_id_2_ptr(cluster_head_t *pclst, unsigned int id)
 
     if(pg_id < direct_pgs)
     {
-        page = pclst->pglist[pg_id];
+        page = (char *)pclst->pglist[pg_id];
+        while(page == 0)
+        {
+            smp_mb();
+            page = (char *)atomic64_read((atomic64_t *)&pclst->pglist[pg_id]);
+        }
     }
     else if((pg_id -= direct_pgs) < indirect_pgs)
     {
         indir_page = (char **)pclst->pglist[CLST_IND_PG];
+        while(indir_page == NULL)
+        {
+            smp_mb();
+            indir_page = (char **)atomic64_read((atomic64_t *)&pclst->pglist[CLST_IND_PG]);
+        }
         offset = pg_id;
         page = indir_page[offset];
+        while(page == 0)
+        {
+            smp_mb();
+            page = (char *)atomic64_read((atomic64_t *)&indir_page[offset]);
+        }        
     }
     else if((pg_id -= indirect_pgs) < double_pgs)
     {
         dindir_page = (char ***)pclst->pglist[CLST_DIND_PG];
+        while(dindir_page == NULL)
+        {
+            smp_mb();
+            dindir_page = (char ***)atomic64_read((atomic64_t *)&pclst->pglist[CLST_DIND_PG]);
+        }
         offset = pg_id >> ptrs_bit;
         indir_page = dindir_page[offset];
+        while(indir_page == 0)
+        {
+            smp_mb();
+            indir_page = (char **)atomic64_read((atomic64_t *)&dindir_page[offset]);
+        }         
         offset = pg_id & (ptrs-1);
         page = indir_page[offset];
+        while(page == 0)
+        {
+            smp_mb();
+            page = (char *)atomic64_read((atomic64_t *)&indir_page[offset]);
+        }
     }
     else
     {
@@ -87,13 +119,20 @@ char* vec_id_2_ptr(cluster_head_t *pclst, unsigned int id)
 
 char* cluster_alloc_page()
 {
-    return malloc(4096);
+    void *p;
+    p = malloc(4096);
+    if(p != 0)
+    {
+        memset(p, 0, 4096);
+        smp_mb();
+    }
+    return p;
 }
 
 int cluster_add_page(cluster_head_t **ppclst)
 {
     char *page, **indir_page, ***dindir_page;
-    u32 size, old_head, new_head;
+    u32 old_head;
     int i, total, id, pg_id, offset, offset2;
     block_head_t *blk;
     cluster_head_t *pclst = *ppclst;
@@ -116,10 +155,13 @@ int cluster_add_page(cluster_head_t **ppclst)
         return CLT_NOMEM;
   
 //    pclst->pglist[pgid] = page;
+    pg_id--;
+
     id = pg_id;
     if(id < direct_pgs)
     {
         pclst->pglist[id] = page;
+        smp_mb();
     }
     else if((id -= direct_pgs) < indirect_pgs)
     {
@@ -136,13 +178,14 @@ int cluster_add_page(cluster_head_t **ppclst)
         }
         else
         {
-            while(pclst->pglist[CLST_IND_PG] == 0)
+            while(atomic64_read((atomic64_t *)&pclst->pglist[CLST_IND_PG]) == 0)
             {
-                ;
+                smp_mb();
             }                
         }
         indir_page = (char **)pclst->pglist[CLST_IND_PG];
         indir_page[offset] = page;
+        smp_mb();
     }
     else if((id -= indirect_pgs) < double_pgs)
     {
@@ -160,9 +203,9 @@ int cluster_add_page(cluster_head_t **ppclst)
         }
         else
         {
-            while(pclst->pglist[CLST_DIND_PG] == 0)
+            while(atomic64_read((atomic64_t *)&pclst->pglist[CLST_DIND_PG]) == 0)
             {
-                ;
+                smp_mb();
             }
 
         }
@@ -184,13 +227,14 @@ int cluster_add_page(cluster_head_t **ppclst)
         }
         else
         {
-            while(dindir_page[offset] == 0)
+            while(atomic64_read((atomic64_t *)&dindir_page[offset]) == 0)
             {
-                ;
+                smp_mb();
             }
         }
         indir_page = dindir_page[offset];        
         indir_page[offset2] = page;
+        smp_mb();
     }
     else
     {
@@ -212,11 +256,10 @@ int cluster_add_page(cluster_head_t **ppclst)
     blk->magic = 0xdeadbeef;
     do
     {
-        old_head = pclst->blk_free_head;
+        old_head = atomic_read((atomic_t *)&pclst->blk_free_head);
         blk->next = old_head;
-        pclst->blk_free_head = id;
-        new_head = atomic_cmpxchg((atomic_t *)&pclst->blk_free_head, old_head, id);
-    }while(new_head != id);
+//        pclst->blk_free_head = id;
+    }while(old_head != atomic_cmpxchg((atomic_t *)&pclst->blk_free_head, old_head, id));
 
     atomic_add(total, (atomic_t *)&pclst->free_blk_cnt);
     return SPT_OK;
@@ -224,7 +267,7 @@ int cluster_add_page(cluster_head_t **ppclst)
 
 void cluster_destroy(cluster_head_t *pclst)
 {
-    printf("\r\n%d\t%s", __LINE__, __FUNCTION__);
+    printf("%d\t%s\r\n", __LINE__, __FUNCTION__);
 }
 
 cluster_head_t * cluster_init()
@@ -232,9 +275,9 @@ cluster_head_t * cluster_init()
     cluster_head_t *phead;
     int ptr_bits;
     u32 vec;
-    spt_vec_t *pvec;
+    spt_vec *pvec;
 
-    phead = cluster_alloc_page();
+    phead = (cluster_head_t *)cluster_alloc_page();
     if(phead == NULL)
         return 0;
 
@@ -262,9 +305,6 @@ cluster_head_t * cluster_init()
     phead->blk_free_head = SPT_NULL;
     phead->dblk_free_head = SPT_NULL;
     
-    phead->vec_buf_head = SPT_NULL;
-    phead->dblk_buf_head = SPT_NULL;
-
     phead->debug = 1;
 
     vec = vec_alloc(&phead, &pvec);
@@ -273,10 +313,11 @@ cluster_head_t * cluster_init()
         cluster_destroy(phead);
         return NULL;
     }
+    pvec->val = 0;
+    pvec->flag = SPT_VEC_FLAG_DATA;
     pvec->pos = 0;
     pvec->down = SPT_NULL;
-    pvec->rdn = -1;
-    spt_set_data_flag(pvec->flag);
+    pvec->rd = SPT_NULL;
     phead->vec_head = vec;
 
     return phead;
@@ -291,22 +332,23 @@ int blk_alloc(cluster_head_t **ppcluster, char **blk)
 
     do
     {
-        while((blk_id = pcluster->blk_free_head) == -1 )
+        while((blk_id = atomic_read((atomic_t *)&pcluster->blk_free_head)) == -1 )
         {
             if(SPT_OK != cluster_add_page(ppcluster))
-            {
-                try_cnts++;
+            {                
                 if(try_cnts != 0)
                 {
                     *blk = NULL;
                     return -1;
                 }
+                try_cnts++;
+                continue;
             }
             pcluster=*ppcluster;
         }
         pblk = (block_head_t *)blk_id_2_ptr(pcluster,blk_id);
         new_head = pblk->next;
-    }while(new_head != atomic_cmpxchg((atomic_t *)&pcluster->blk_free_head, blk_id, new_head));
+    }while(blk_id != atomic_cmpxchg((atomic_t *)&pcluster->blk_free_head, blk_id, new_head));
     atomic_sub(1, (atomic_t *)&pcluster->free_blk_cnt);
     *blk = (char *)pblk;
 
@@ -316,7 +358,7 @@ int blk_alloc(cluster_head_t **ppcluster, char **blk)
 int db_add_blk(cluster_head_t **ppcluster)
 {
     char *pblk;
-    int i, total, id, blkid, new_head, old_head;
+    int i, total, id, blkid, old_head;
     db_head_t *db;
     cluster_head_t *head;
 
@@ -339,11 +381,9 @@ int db_add_blk(cluster_head_t **ppcluster)
 
     do
     {
-        old_head = head->dblk_free_head;
+        old_head = atomic_read((atomic_t *)&head->dblk_free_head);
         db->next = old_head;
-        head->blk_free_head = id;
-        new_head = atomic_cmpxchg((atomic_t *)&head->dblk_free_head, old_head, id);
-    }while(new_head != id);
+    }while(old_head != atomic_cmpxchg((atomic_t *)&head->dblk_free_head, old_head, id));
 
     atomic_add(total, (atomic_t *)&head->free_dblk_cnt);
 
@@ -353,7 +393,7 @@ int db_add_blk(cluster_head_t **ppcluster)
 int vec_add_blk(cluster_head_t **ppcluster)
 {
     char *pblk;
-    int i, total, id, blkid, old_head, new_head;
+    int i, total, id, blkid, old_head;
     vec_head_t *vec;
     cluster_head_t *head;
 
@@ -377,11 +417,9 @@ int vec_add_blk(cluster_head_t **ppcluster)
 
     do
     {
-        old_head = head->free_dblk_cnt;
+        old_head = atomic_read((atomic_t *)&head->vec_free_head);
         vec->next = old_head;
-        head->blk_free_head = id;
-        new_head = atomic_cmpxchg((atomic_t *)&head->free_dblk_cnt, old_head, id);
-    }while(new_head != id);
+    }while(old_head != atomic_cmpxchg((atomic_t *)&head->vec_free_head, old_head, id));
 
     atomic_add(total, (atomic_t *)&head->free_vec_cnt);
     
@@ -394,26 +432,27 @@ unsigned int db_alloc(cluster_head_t **ppcluster, char **db)
     int db_id;
     db_head_t *pdb;
     cluster_head_t *pcluster=*ppcluster;
-    u32 try_cnts, new_head, old_head;
-
+    u32 try_cnts, new_head;
+    try_cnts = 0;
     do
     {
-        while((db_id = pcluster->dblk_free_head) == -1 )
+        while((db_id = atomic_read((atomic_t *)&pcluster->dblk_free_head)) == -1 )
         {
             if(SPT_OK != db_add_blk(ppcluster))
             {
-                try_cnts++;
                 if(try_cnts != 0)
                 {
                     *db = NULL;
                     return -1;
                 }
+                try_cnts++;
+                continue;                
             }
             pcluster=*ppcluster;
         }
         pdb = (db_head_t *)db_id_2_ptr(pcluster,db_id);
         new_head = pdb->next;
-    }while(new_head != atomic_cmpxchg((atomic_t *)&pcluster->dblk_free_head, db_id, new_head));
+    }while(db_id != atomic_cmpxchg((atomic_t *)&pcluster->dblk_free_head, db_id, new_head));
     atomic_sub(1, (atomic_t *)&pcluster->free_dblk_cnt);
     atomic_add(1, (atomic_t *)&pcluster->used_dblk_cnt);
     *db = (char *)pdb;
@@ -429,10 +468,10 @@ void db_free(cluster_head_t *pcluster, int id)
     pdb = (db_head_t *)db_id_2_ptr(pcluster,id);
     do
     {
-        old_head = pcluster->dblk_free_head;
+        old_head = atomic_read((atomic_t *)&pcluster->dblk_free_head);
         pdb->next = old_head;
         
-    }while(id != atomic_cmpxchg((atomic_t *)&pcluster->dblk_free_head, old_head, id));
+    }while(old_head != atomic_cmpxchg((atomic_t *)&pcluster->dblk_free_head, old_head, id));
     
     atomic_add(1, (atomic_t *)&pcluster->free_dblk_cnt);
     atomic_sub(1, (atomic_t *)&pcluster->used_dblk_cnt);
@@ -441,16 +480,16 @@ void db_free(cluster_head_t *pcluster, int id)
 }
 
 
-unsigned int vec_alloc(cluster_head_t **ppcluster, spt_vec_t **vec)
+unsigned int vec_alloc(cluster_head_t **ppcluster, spt_vec **vec)
 {
     int vec_id;
     vec_head_t *pvec;
     cluster_head_t *pcluster = *ppcluster;
-    u32 try_cnts, new_head, old_head;
+    u32 try_cnts, new_head;
 
     do
     {
-        while((vec_id = pcluster->blk_free_head) == -1 )
+        while((vec_id = atomic_read((atomic_t *)&pcluster->vec_free_head)) == -1 )
         {
             if(SPT_OK != vec_add_blk(ppcluster))
             {
@@ -465,9 +504,10 @@ unsigned int vec_alloc(cluster_head_t **ppcluster, spt_vec_t **vec)
         }
         pvec = (vec_head_t *)vec_id_2_ptr(pcluster,vec_id);
         new_head = pvec->next;
-    }while(new_head != atomic_cmpxchg((atomic_t *)&pcluster->blk_free_head, vec_id, new_head));
-    atomic_sub(1, (atomic_t *)&pcluster->free_blk_cnt);
-    *vec = (char *)pvec;
+    }while(vec_id != atomic_cmpxchg((atomic_t *)&pcluster->vec_free_head, vec_id, new_head));
+    atomic_sub(1, (atomic_t *)&pcluster->free_vec_cnt);
+    atomic_add(1, (atomic_t *)&pcluster->used_vec_cnt);
+    *vec = (spt_vec *)pvec;
     
     return vec_id;
 }
@@ -480,10 +520,10 @@ void vec_free(cluster_head_t *pcluster, int id)
     pvec = (vec_head_t *)vec_id_2_ptr(pcluster,id);
     do
     {
-        old_head = pcluster->vec_free_head;
+        old_head = atomic_read((atomic_t *)&pcluster->vec_free_head);
         pvec->next = old_head;
         
-    }while(id != atomic_cmpxchg((atomic_t *)&pcluster->vec_free_head, old_head, id));
+    }while(old_head != atomic_cmpxchg((atomic_t *)&pcluster->vec_free_head, old_head, id));
     
     atomic_add(1, (atomic_t *)&pcluster->free_vec_cnt);
     atomic_sub(1, (atomic_t *)&pcluster->used_vec_cnt);
@@ -620,7 +660,7 @@ int test_add_N_page(cluster_head_t **ppclst, int n)
 void test_vec_alloc_n_times(cluster_head_t **ppclst)
 {
     int i,vec_a;
-    spt_vec_t *pvec_a, *pid_2_ptr;
+    spt_vec *pvec_a, *pid_2_ptr;
     cluster_head_t *clst = *ppclst;
 
     
@@ -633,18 +673,18 @@ void test_vec_alloc_n_times(cluster_head_t **ppclst)
             break;
         }
         clst = *ppclst;
-        pid_2_ptr = (spt_vec_t *)vec_id_2_ptr(clst, vec_a);
+        pid_2_ptr = (spt_vec *)vec_id_2_ptr(clst, vec_a);
         if(pid_2_ptr != pvec_a)
         {
-            printf("\r\n vec_a:%d pvec_a:%p pid_2_ptr:%p", vec_a,pvec_a,pid_2_ptr);
+            printf("vec_a:%d pvec_a:%p pid_2_ptr:%p\r\n", vec_a,pvec_a,pid_2_ptr);
         }
     }
-    printf("\r\n total:%d", i);
+    printf("total:%d\r\n", i);
     for(;i>0;i--)
     {
         vec_free(clst, i-1);
     }
-    printf("\r\n ==============done!");
+    printf(" ==============done!\r\n");
     return;
 }
 

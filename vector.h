@@ -1,50 +1,43 @@
 #ifndef _SPLITTER_VECTOR_H
 #define _SPLITTER_VECTOR_H
 
+#include <atomic_user.h>
 #include <lf_order.h>
 
-typedef unsigned char u8;
-typedef unsigned char u8;
-typedef unsigned short u16;
-typedef unsigned int u32;
-typedef unsigned long long u64;
-typedef long long s64;
+
+#define SPT_VEC_FLAG_RIGHT 0
+#define SPT_VEC_FLAG_DATA 1
+#define SPT_VEC_FlAG_SIGNPOST 2
+#define SPT_VEC_SYS_FLAG_DATA 1
 
 
-///////////
-#define SPT_PTR_MASK        (0x00000000fffffffful)
-#define SPT_PTR_VEC         (0)
-#define SPT_PTR_DATA        (1)
-////////////////////////////////////////
-#define SPT_VEC_FLAG_RIGHT      0
-#define SPT_VEC_FLAG_DATA       1
-#define SPT_VEC_FlAG_SIGNPOST   2
+#define SPT_VEC_VALID 0
+#define SPT_VEC_INVALID 1
 
-#define SPT_VEC_VALID       0
-#define SPT_VEC_INVALID     1     
+#define SPT_VEC_SIGNPOST_BIT 14
 
-#define SPT_VEC_SIGNPOST_BIT    14
+#define SPT_VEC_SIGNPOST_MASK ((1ul<<SPT_VEC_SIGNPOST_BIT)-1)
 
-#define SPT_VEC_SIGNPOST_MASK   ((1ul<<SPT_VEC_SIGNPOST_BIT)-1)
-
-///////////////////////////////
-
-#define SPT_VEC_POS_INDEX_BIT    8
+#if 0
+#define SPT_VEC_POS_INDEX_BIT 8
 #define SPT_VEC_POS_INDEX_MASK 0x3F00
 #define SPT_VEC_POS_MULTI_MASK 0xFF
 
-#define SPT_VEC_SYS_FLAG_DATA      1
-
-#define spt_get_pos_index(x)                ((x&SPT_VEC_POS_INDEX_MASK)>>SPT_VEC_POS_INDEX_BIT)
-#define spt_get_pos_multi(x)                (x&SPT_VEC_POS_MULTI_MASK)
-#define spt_set_pos(pos,index,multi)        (pos = (index << SPT_VEC_POS_INDEX_BIT)|(multi))
+#define spt_get_pos_index(x) ((x&SPT_VEC_POS_INDEX_MASK)>>SPT_VEC_POS_INDEX_BIT)
+#define spt_get_pos_multi(x) (x&SPT_VEC_POS_MULTI_MASK)
+#define spt_set_pos(pos,index,multi) (pos = (index << SPT_VEC_POS_INDEX_BIT)|(multi))
 
 
-#define POW256(x)    (1<<(8*x))
+#define POW256(x) (1<<(8*x))
+#endif
 
-#define spt_set_invalid_flag(x)        (x.valid = SPT_VEC_INVALID)
-#define spt_set_right_flag(x)        (x.flag = SPT_VEC_FLAG_RIGHT)
-#define spt_set_data_flag(x)        (x.flag = SPT_VEC_FLAG_DATA)
+#define spt_set_invalid_flag(x) (x.valid = SPT_VEC_INVALID)
+#define spt_set_right_flag(x) (x.flag = SPT_VEC_FLAG_RIGHT)
+#define spt_set_data_flag(x) (x.flag = SPT_VEC_FLAG_DATA)
+
+#define SPT_PTR_MASK (0x00000000fffffffful)
+#define SPT_PTR_VEC (0ul)
+#define SPT_PTR_DATA (1ul)
 
 
 typedef struct 
@@ -69,13 +62,12 @@ typedef struct cluster_head
     int vec_head;
     volatile unsigned int vec_free_head;
     volatile unsigned int dblk_free_head;
+    volatile unsigned int blk_free_head;
 
     unsigned int pg_num_max;
     unsigned int pg_num_total;
     unsigned int pg_cursor;
     unsigned int blk_per_pg_bits;
-//    unsigned int db_per_pg_bits;
-//    unsigned int vec_per_pg_bits;
     unsigned int pg_ptr_bits;
     unsigned int blk_per_pg;
     unsigned int db_per_blk;
@@ -84,6 +76,7 @@ typedef struct cluster_head
     unsigned int free_blk_cnt;
     unsigned int free_vec_cnt;
     unsigned int free_dblk_cnt;
+    unsigned int used_vec_cnt;
     unsigned int used_dblk_cnt;
     unsigned int debug;
     
@@ -109,7 +102,7 @@ typedef struct spt_data_hd
 }spt_dhd;
 
 
-typedef struct spt_vec
+typedef struct spt_vec_t
 {
     union
     {
@@ -131,15 +124,7 @@ typedef struct spt_vec
             volatile unsigned long long dummy_rd:           23;
         };
     };
-}spt_vec_t;
-
-typedef struct spt_vec_real
-{
-    int down;
-    int right;
-    int data;
-    long long pos;
-}spt_vec_t_r;
+}spt_vec;
 
 typedef struct vec_head
 {
@@ -180,13 +165,6 @@ typedef struct spt_insert_info
 }insert_info_t;
 
 
-/*修改完成后需要释放内存*/
-typedef struct spt_modify_vec
-{
-    unsigned int            vec_id;/*需要修改的向量id*/
-    spt_vec_t_r                value;/*要修改的向量新值*/
-    struct spt_modify_vec    *next;
-}spt_md_vec_t;
 
 typedef struct spt_free_vector_node
 {
@@ -245,7 +223,7 @@ typedef struct spt_stack_st
 
 typedef struct spt_traversal_info_st
 {
-    spt_vec_t_r vec_r;
+    spt_vec vec_r;
     int direction;
 }travl_info;
 
@@ -281,18 +259,19 @@ typedef struct spt_test_file_head
 //#define DBLK_BITS 3
 #define DATA_SIZE 8
 #define RSV_SIZE 2
-#define DBLK_SIZE (DATA_SIZE + RSV_SIZE)
+#define DBLK_SIZE (DATA_SIZE + sizeof(spt_dhd))
 #define VBLK_BITS 3
 #define VBLK_SIZE (1<<VBLK_BITS)
 #define DATA_BIT_MAX (DATA_SIZE*8)
 
 //#define vec_id_2_ptr(pchk, id)    ((char *)pchk+id*VBLK_SIZE);
 
-unsigned int vec_alloc(cluster_head_t **ppcluster, spt_vec_t **vec);
+unsigned int vec_alloc(cluster_head_t **ppcluster, spt_vec **vec);
 void vec_free(cluster_head_t *pcluster, int id);
 void vec_list_free(cluster_head_t *pcluster, int id);
 void db_free(cluster_head_t *pcluster, int id);
 
+extern spt_thrd_t *g_thrd_h;
 
 
 #endif

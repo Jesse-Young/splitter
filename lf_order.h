@@ -76,5 +76,7 @@ typedef struct
 
 
 extern orderq_h_t *lfo_q_init(int thread_num);
+extern int lfo_inq(orderq_h_t *oq, int thread, u64 cmd, u64 oid);
+extern u64 lfo_deq(orderq_h_t *oq, int thread, u64 oid);
 
 #endif

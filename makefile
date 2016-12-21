@@ -9,7 +9,7 @@ PRG=splitter
 OBJ= $(patsubst %.c,%.o,$(wildcard *.c))
 
 $(PRG):$(OBJ)
-	$(CC) $(INC) $(LIB) -o $@ $(OBJ)
+	$(CC) $(INC) -o $@ $(OBJ) $(LIB)
 	
 %.o:%.c
 	$(CC) -c  $(CC_FLAG) $(INC) $< -o $@
