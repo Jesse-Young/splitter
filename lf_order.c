@@ -201,6 +201,119 @@ orderq_h_t *lfo_q_init(int thread_num)
     return oq;
 }
 
+u64 *dq_get_l0_pg(orderq_h_t *oq, int thread, u64 oid)
+{
+    u64 *lv1d,*lv2d,*lv3d,*lv4d,*lv5d,*lv6d, *lv7d;
+    u64 last_oid;
+    last_oid = oq->local_oid[thread];
+    oq->local_oid[thread] = oid;
+    if(oids_in_same_page(oid, last_oid))
+    {
+        oq->local_oid[thread] = oid;//可以不赋值，等到换页时再赋值
+        return oq->local_l0_pg[thread];
+    }
+
+    if(oid < l0_PTRS_PER_PG)
+    {
+        oq->local_l0_pg[thread] = oq->l0_fd;
+        oq->local_oid[thread] = oid;
+        return oq->local_l0_pg[thread];
+    }
+    else if(oid < l1_PTRS_PER_PG)
+    {
+        lv2d = (u64 *)&oq->l1_fd;
+        goto get_lv1d;
+    }
+    else if(oid < l2_PTRS_PER_PG)
+    {
+        lv3d = (u64 *)&oq->l2_fd;
+        goto get_lv2d;
+    }        
+    else if(oid < l3_PTRS_PER_PG)
+    {
+        lv4d = (u64 *)&oq->l3_fd;
+        goto get_lv3d;
+    }        
+    else if(oid < l4_PTRS_PER_PG)
+    {
+        lv5d = (u64 *)&oq->l4_fd;
+        goto get_lv4d;
+    }        
+    else if(oid < l5_PTRS_PER_PG)
+    {
+        lv6d = (u64 *)&oq->l5_fd;
+        goto get_lv5d;
+    }
+    else if(oid < l6_PTRS_PER_PG) 
+    {
+        lv7d = (u64 *)&oq->l6_fd;
+        goto get_lv6d;
+    }
+    else
+    {
+        goto get_lv7d;
+    }
+
+get_lv7d:    
+    lv7d = l7d_alloc((u64 *)&oq->l7_fd, oid, oq);
+    if(lv7d == NULL)
+    {
+        lforder_debug("OOM\n");
+        return NULL;
+    }
+get_lv6d:        
+    lv6d = l6d_alloc(lv7d, oid, oq);
+    if(lv6d == NULL)
+    {
+        lforder_debug("OOM\n");
+        return NULL;
+    }
+get_lv5d:
+    lv5d = l5d_alloc(lv6d, oid, oq);
+    if(lv5d == NULL)
+    {
+        lforder_debug("OOM\n");
+        return NULL;
+    }
+get_lv4d:
+    lv4d = l4d_alloc(lv5d, oid, oq);
+    if(lv4d == NULL)
+    {
+        lforder_debug("OOM\n");
+        return NULL;
+    }
+get_lv3d:        
+    lv3d = l3d_alloc(lv4d, oid, oq);
+    if(lv3d == NULL)
+    {
+        lforder_debug("OOM\n");
+        return NULL;
+    }
+get_lv2d:
+    lv2d = l2d_alloc(lv3d, oid, oq);
+    if(lv2d == NULL)
+    {
+        lforder_debug("OOM\n");
+        return NULL;
+    }
+get_lv1d:
+    lv1d = l1d_alloc(lv2d, oid, oq);
+    if(lv1d == NULL)
+    {
+        lforder_debug("OOM\n");
+        return NULL;
+    }
+
+    if(unlikely(lxd_none(*lv1d)) && unlikely(__lxd_alloc(lv1d, oq)))
+    {
+        lforder_debug("OOM\n");
+        return NULL;
+    }   
+    oq->local_l0_pg[thread] = (u64 *)*lv1d;
+    return (u64 *)*lv1d;
+}
+
+
 //static
 u64 *get_l0_pg(orderq_h_t *oq, int thread, u64 oid)
 {
@@ -214,8 +327,13 @@ u64 *get_l0_pg(orderq_h_t *oq, int thread, u64 oid)
         return oq->local_l0_pg[thread];
     }
 
-//    if(oid < l0_PTRS_PER_PG)
-    if(oid < l1_PTRS_PER_PG)
+    if(oid < l0_PTRS_PER_PG)
+    {
+        oq->local_l0_pg[thread] = oq->l0_fd;
+        oq->local_oid[thread] = oid;
+        return oq->local_l0_pg[thread];
+    }
+    else if(oid < l1_PTRS_PER_PG)
     {
         lv2d = (u64 *)&oq->l1_fd;
         goto get_lv1d;
@@ -1057,10 +1175,10 @@ int lfo_inq(orderq_h_t *oq, int thread, u64 cmd, u64 oid)
 
 u64 lfo_deq(orderq_h_t *oq, int thread, u64 oid)
 {
-    u64 *cur_pg, *entry;
+    u64 *cur_pg, *entry, ret;
     int idx;
     
-    cur_pg = get_l0_pg(oq, thread, oid);
+    cur_pg = dq_get_l0_pg(oq, thread, oid);
     if(cur_pg == NULL)
     {
         lforder_debug("OOM\n");
@@ -1074,13 +1192,15 @@ u64 lfo_deq(orderq_h_t *oq, int thread, u64 oid)
     {
         smp_mb();
     }
+    ret = *entry;
+    *entry = 0;
     idx++;
     oid++;
     if(idx == PTRS_PER_LEVEL)
     {
         lfo_deal_finished_pgs(oq, oid);
     }        
-    return *entry;
+    return ret;
 }
 
 #ifdef LF_DEBUG

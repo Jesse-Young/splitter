@@ -3877,9 +3877,10 @@ typedef union spt_vec1
 void *spt_thread(void *arg)
 {
     cpu_set_t mask;
-    int i, vec, *buf;
+    int i, vec, *buf, db;
     u64 order_id;
     spt_vec *pvec, *pid_2_ptr;
+    spt_dhd *pdb, *pdbid_2_ptr;
 //    u64 start, end;
     i = (long)arg;
 
@@ -3897,10 +3898,12 @@ void *spt_thread(void *arg)
         spt_debug("OOM\r\n");
     
     printf("writefn%d,start\n",i);
+//    spt_thread_start();
 
     for(order_id=0;order_id<100;order_id ++)
     {
-        for(i=0;i<1000000;i++)
+        #if 0
+        for(i=0;i<10000;i++)
         {
             vec = vec_alloc(&pgclst, &pvec);
             if(pvec != NULL)
@@ -3914,12 +3917,35 @@ void *spt_thread(void *arg)
             }
 
         }
-        for(i=0;i<1000000;i++)
+        for(i=0;i<10000;i++)
         {
             vec = buf[i];
-            vec_free(pgclst, vec);
+            vec_free_to_buf(pgclst, vec, g_thrd_id);
         }
+        #else
+        for(i=0;i<100000;i++)
+        {
+            db = db_alloc(&pgclst, (char **)&pdb);
+            if(pdb != NULL)
+            {
+                pdbid_2_ptr = (spt_dhd *)db_id_2_ptr(pgclst, db);
+                if(pdbid_2_ptr != pdb)
+                {
+                    spt_debug("db:%d pdb:%p pdbid_2_ptr:%p\r\n", db,pdb,pdbid_2_ptr);
+                }
+                buf[i] = db;
+            }
+
+        }
+        for(i=0;i<100000;i++)
+        {
+            db = buf[i];
+            db_free(pgclst, db);
+        }
+
+        #endif
     }
+//    spt_thread_exit(g_thrd_id);
     spt_debug("test%d done\r\n", g_thrd_id);
     while(1)
     {
