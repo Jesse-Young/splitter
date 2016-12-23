@@ -99,7 +99,7 @@ typedef struct spt_data_hd
 {
     volatile int ref;/*引用计数*/
     int rank;/*for test*/
-}spt_dhd;
+}spt_dh;
 
 
 typedef struct spt_vec_t
@@ -221,10 +221,18 @@ typedef struct spt_stack_st
     int stack_size;    /* 栈大小 */
 }spt_stack;
 
+typedef  struct spt_vec_full_t
+{
+    int down;
+    int right;
+    int data;
+    long long pos;
+}spt_vec_f;
+
 typedef struct spt_traversal_info_st
 {
-    spt_vec vec_r;
-    int direction;
+    spt_vec_f vec_f;
+    long long signpost;
 }travl_info;
 
 typedef struct spt_xy_st
@@ -259,7 +267,7 @@ typedef struct spt_test_file_head
 //#define DBLK_BITS 3
 #define DATA_SIZE 8
 #define RSV_SIZE 2
-#define DBLK_SIZE (DATA_SIZE + sizeof(spt_dhd))
+#define DBLK_SIZE (DATA_SIZE + sizeof(spt_dh))
 #define VBLK_BITS 3
 #define VBLK_SIZE (1<<VBLK_BITS)
 #define DATA_BIT_MAX (DATA_SIZE*8)

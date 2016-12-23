@@ -1142,7 +1142,7 @@ int find_data(cluster_head_t **ppclst, query_info_t *pqinfo)
     vec_cmpret_t cmpres;
     insert_info_t st_insert_info;
     char *pdata;
-    spt_dhd *pdh;
+    spt_dh *pdh;
 //    query_info_t *pqinfo = pquery_info;
     op = pqinfo->op;
 
@@ -1452,7 +1452,7 @@ refind_forward:
                 cur_data = get_data_id(*ppclst, pcur);
                 if(cur_data >= 0)
                 {
-                    pcur_data = db_id_2_ptr(*ppclst, cur_data) + sizeof(spt_dhd);
+                    pcur_data = db_id_2_ptr(*ppclst, cur_data) + sizeof(spt_dh);
                 }
                 else if(cur_data == SPT_DO_AGAIN)
                     goto refind_start;
@@ -1864,9 +1864,9 @@ refind_forward:
         if(cur_data == SPT_DO_AGAIN)
             goto refind_start;
         
-        pcur_data = db_id_2_ptr(*ppclst, cur_data) + sizeof(spt_dhd);
+        pcur_data = db_id_2_ptr(*ppclst, cur_data) + sizeof(spt_dh);
     }
-    pdh = (spt_dhd *)(pcur_data - sizeof(spt_dhd));
+    pdh = (spt_dh *)(pcur_data - sizeof(spt_dh));
 
     switch(op){
     case SPT_OP_FIND:
@@ -3389,6 +3389,249 @@ void debug_print_2(u8 *p, u32 size)
     return;
 }
 
+void debug_get_final_vec(cluster_head_t *pclst, spt_vec* pvec, spt_vec_f *pvec_f, 
+                            u64 sp, u32 data, int direction)
+{
+    //下路标没有dataid，所以对于路标来说，dataid不重要
+    if(pvec->flag == SPT_VEC_FlAG_SIGNPOST)
+    {
+        if(pvec->ext_sys_flg == SPT_VEC_SYS_FLAG_DATA)
+        {
+            spt_debug("found SPT_VEC_SYS_FLAG_DATA vec\r\n");
+            while(1);
+        }
+        pvec_f->data = data;
+        pvec_f->pos = pvec->idx << SPT_VEC_SIGNPOST_BIT;
+        if(direction == SPT_DOWN)
+        {
+            pvec_f->down = pvec->rd;
+            pvec_f->right = SPT_INVALID;
+        }
+        else
+        {
+            pvec_f->right = pvec->rd;
+            pvec_f->down = SPT_INVALID;
+        }
+        return;
+    }
+
+    pvec_f->down = pvec->down;;
+    pvec_f->pos = pvec->pos + sp;
+    if(pvec->flag == SPT_VEC_FLAG_DATA)
+    {
+        pvec_f->data = pvec->rd;
+        pvec_f->right = SPT_NULL;
+        return;
+    }
+    pvec_f->right = pvec->rd;
+    if(data != -1)
+    {
+        pvec_f->data = data;
+    }
+    else
+    {
+        pvec_f->data = get_data_id(pclst, pvec);
+        if(pvec_f->data == SPT_DO_AGAIN)
+        {
+            spt_debug("invalid found\r\n");
+            while(1);
+        }
+    }
+    return;
+}
+
+void debug_vec_print(spt_vec_f *pvec_f, int vec_id)
+{
+    printf("{down:%d, right:%d, pos:%lld, data:%d}[%d]\r\n",pvec_f->down, pvec_f->right, pvec_f->pos, pvec_f->data, vec_id);
+    return;
+}
+
+void debug_id_vec_print(cluster_head_t *pclst, int id)
+{
+    return;
+}
+
+void debug_data_print(u8 *pdata)
+{
+    int i;
+    u8 *p = pdata;
+    for(i = 0; i < DATA_SIZE; i++,p++)
+    {
+        if(i%8 == 0)
+        {
+            printf("\r\n");
+        }
+        printf("%02x ", *p);
+    }
+    printf("\r\n");
+    return;
+}
+
+
+void debug_travl_stack_push(spt_stack *p_stack, spt_vec_f *pvec_f, long long signpost)
+{
+    travl_info *node;
+    node = (travl_info *)malloc(sizeof(travl_info));
+    if(node == NULL)
+    {
+        printf("\r\nOUT OF MEM        %d\t%s", __LINE__, __FUNCTION__);
+        debug_travl_stack_destroy(p_stack);
+        return;
+    }
+    node->signpost = signpost;
+    node->vec_f = *pvec_f;
+    spt_stack_push(p_stack,(int)node);
+    return;
+}
+travl_info *debug_travl_stack_pop(spt_stack *p_stack)
+{
+    return (travl_info *)spt_stack_pop(p_stack);
+}
+
+
+void debug_cluster_travl(cluster_head_t *pclst)
+{
+    spt_stack stack = {0};
+    spt_stack *pstack = &stack;
+    //u8 data[DATA_SIZE] = {0};
+    int cur_data, cur_vecid;
+    spt_vec *pcur;
+    spt_vec_f st_vec_f;
+    spt_dh *pdh;
+    u8 *pcur_data = NULL;
+    u64 signpost;
+    travl_info *pnode;
+    u16 rank, *prsv;
+
+    signpost = 0;
+    spt_stack_init(pstack, 100);
+    cur_data = -1;
+
+//    cur_vec = pclst->vec_head;
+    pcur = (spt_vec *)vec_id_2_ptr(pclst, pclst->vec_head);
+
+    debug_get_final_vec(pclst, pcur, &st_vec_f, signpost, cur_data, SPT_RIGHT);
+    if(pcur->down == SPT_NULL && pcur->rd == SPT_NULL)
+    {
+        printf("cluster is null\r\n");
+        return;
+    }
+    rank = pclst->used_dblk_cnt;
+    
+    if(cur_data != -1)
+    {
+        pcur_data = db_id_2_ptr(pclst, cur_data) + sizeof(spt_dh);
+    }
+#if 0
+    if(st_vec_r.pos == 0)
+    {
+        printf("only one vec in this cluster\r\n");
+        debug_vec_print(&st_vec_r, cur_vec);
+        debug_data_print(pcur_data);
+        return;        
+    }
+#endif
+    debug_travl_stack_push(pstack,&st_vec_f, signpost);
+
+    while (1)
+    {
+        if(pcur->flag != SPT_VEC_FLAG_DATA)
+        {
+            cur_vecid = st_vec_f.right;
+            pcur = (spt_vec *)vec_id_2_ptr(pclst, cur_vecid);
+            debug_get_final_vec(pclst, pcur, &st_vec_f, signpost, cur_data, SPT_RIGHT);
+            debug_vec_print(&st_vec_f, cur_vecid);
+            if(pcur->flag == SPT_VEC_FlAG_SIGNPOST)
+            {
+                signpost = st_vec_f.pos;
+                
+                cur_vecid = st_vec_f.right;
+                pcur = (spt_vec *)vec_id_2_ptr(pclst, cur_vecid);
+                debug_get_final_vec(pclst, pcur, &st_vec_f, signpost, cur_data, SPT_RIGHT);
+                debug_vec_print(&st_vec_f, cur_vecid);                
+                if(pcur->flag == SPT_VEC_FlAG_SIGNPOST)
+                {
+                    spt_debug("double signpost vec found!!\r\n");
+                    while(1);
+                }
+            }
+            debug_travl_stack_push(pstack,&st_vec_f, signpost);
+            #if 0
+            pos = st_vec_f.pos;
+            if(pos != 0)
+                spt_bit_cpy(data, pcur_data, bit, pos);
+            else
+                spt_bit_cpy(data, pcur_data, bit, DATA_BIT_MAX - bit);
+            bit += st_vec_r.pos;
+            #endif
+        }
+        else
+        {            
+            //debug_vec_print(&st_vec_r, cur_vec);
+            //单个数据遍历完
+            //spt_bit_cpy(data, pcur_data, bit, DATA_BIT_MAX - bit);
+            //此时data应该等于插入的某个数
+            if(pcur_data != NULL)//head->right为空时，pcur_data等于空
+            {
+                #if 0
+                if(memcmp(data, pcur_data, DATA_SIZE)!=0)
+                {
+                    printf("\r\nErr    %d\t%s", __LINE__, __FUNCTION__);
+                }
+                #endif
+                pdh = (spt_dh *)(pcur_data-sizeof(spt_dh));
+                pdh->rank = rank;
+                rank--;
+                debug_data_print(pcur_data);
+            }
+            
+            if(spt_stack_empty(pstack))
+            {
+                break;
+            }
+            while(1)
+            {
+                pnode = debug_travl_stack_pop(pstack);
+                if(pnode == (travl_info *)-1)
+                {
+                    printf("\r\n");
+                    return;
+                }
+                signpost = pnode->signpost;
+                if(pnode->vec_f.down != SPT_NULL)
+                {
+                    cur_vecid = pnode->vec_f.down;
+                    pcur = (spt_vec *)vec_id_2_ptr(pclst, cur_vecid);
+                    debug_get_final_vec(pclst, pcur, &st_vec_f, signpost, -1, SPT_DOWN);
+                    //debug_vec_print(&st_vec_f, cur_vecid);
+                    
+                    if(pcur->flag == SPT_VEC_FlAG_SIGNPOST)
+                    {
+                        signpost = st_vec_f.pos;
+                        cur_vecid = pnode->vec_f.down;
+                        pcur = (spt_vec *)vec_id_2_ptr(pclst, cur_vecid);
+                        debug_get_final_vec(pclst, pcur, &st_vec_f, signpost, -1, SPT_DOWN);
+                        if(pcur->flag == SPT_VEC_FlAG_SIGNPOST)
+                        {
+                            spt_debug("double signpost vec found!!\r\n");
+                            while(1);
+                        }
+                    }
+                    cur_data = st_vec_f.data;
+                    pcur_data = (u8 *)db_id_2_ptr(pclst, cur_data);
+                    printf("\r\n@@data[%p],bit:%lld\r\n", pcur_data, st_vec_f.pos);
+                    debug_vec_print(&st_vec_f, cur_vecid);
+                    debug_travl_stack_push(pstack,&st_vec_f, signpost);
+                    free(pnode);
+                    break;
+                }
+                free(pnode);
+            }
+        }
+    }
+    
+}
+
 
 #if 0
 void debug_vec_print(spt_vec_r *pvec_r, int vec_id)
@@ -3880,7 +4123,7 @@ void *spt_thread(void *arg)
     int i, vec, *buf, db;
     u64 order_id;
     spt_vec *pvec, *pid_2_ptr;
-    spt_dhd *pdb, *pdbid_2_ptr;
+    spt_dh *pdb, *pdbid_2_ptr;
 //    u64 start, end;
     i = (long)arg;
 
@@ -3928,7 +4171,7 @@ void *spt_thread(void *arg)
             db = db_alloc(&pgclst, (char **)&pdb);
             if(pdb != NULL)
             {
-                pdbid_2_ptr = (spt_dhd *)db_id_2_ptr(pgclst, db);
+                pdbid_2_ptr = (spt_dh *)db_id_2_ptr(pgclst, db);
                 if(pdbid_2_ptr != pdb)
                 {
                     spt_debug("db:%d pdb:%p pdbid_2_ptr:%p\r\n", db,pdb,pdbid_2_ptr);
