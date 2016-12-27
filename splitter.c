@@ -107,7 +107,7 @@ void spt_bit_cpy(u8 *to, const u8 *from, u64 start, u64 len)
 
 void spt_stack_init(spt_stack *p_stack, int size)
 {
-    p_stack->p_bottom = (int *)malloc(size * sizeof(int));
+    p_stack->p_bottom = (void **)malloc(size * sizeof(void *));
    
     if (p_stack->p_bottom == NULL)
     {
@@ -130,14 +130,14 @@ int spt_stack_empty(spt_stack *p_stack)
     return p_stack->p_top <= p_stack->p_bottom;
 }
 
-void spt_stack_push(spt_stack *p_stack, int value)
+void spt_stack_push(spt_stack *p_stack, void *value)
 {
     spt_stack *p_tmp = (spt_stack *)p_stack->p_bottom;
     
     if (spt_stack_full(p_stack))
     {      
         p_stack->p_bottom = 
-        (int *)realloc(p_stack->p_bottom, 2*p_stack->stack_size*sizeof(int));
+        (void **)realloc(p_stack->p_bottom, 2*p_stack->stack_size*sizeof(void *));
         
         if (!p_stack->p_bottom)
         {
@@ -153,13 +153,13 @@ void spt_stack_push(spt_stack *p_stack, int value)
     return;
  }
 
-int spt_stack_pop(spt_stack *p_stack)
+void* spt_stack_pop(spt_stack *p_stack)
 {
-    int value = 0;
+    void *value = 0;
    
     if (spt_stack_empty(p_stack))
     {
-        return -1;
+        return (void *)-1;
     }
     value = *(p_stack->p_top--);
    
@@ -531,6 +531,7 @@ int do_insert_dsignpost_right(cluster_head_t **ppclst, insert_info_t *pinsert, c
     spt_vec tmp_vec, *pvec_a;  
     u32 dataid, vecid_a;
     char *pdata;
+    spt_dh *pdh;
 
     dataid = db_alloc(ppclst, &pdata);
     if(pdata == 0)
@@ -540,6 +541,9 @@ int do_insert_dsignpost_right(cluster_head_t **ppclst, insert_info_t *pinsert, c
         printf("\r\n%d\t%s", __LINE__, __FUNCTION__);
         return SPT_NOMEM;
     }
+    pdh = (spt_dh *)pdata;
+    pdh->ref = 1;
+    pdata = pdata + sizeof(spt_dh);
     memcpy(pdata, new_data, DATA_SIZE);
 
     tmp_vec.val = pinsert->key_val;
@@ -581,7 +585,8 @@ int do_insert_rsignpost_down(cluster_head_t **ppclst, insert_info_t *pinsert, ch
     u64 signpost;
     u32 dataid, vecid_a, vecid_b, vecid_s;
     char *pdata;
-
+    spt_dh *pdh;
+    
     dataid = db_alloc(ppclst, &pdata);
     if(pdata == 0)
     {
@@ -590,6 +595,9 @@ int do_insert_rsignpost_down(cluster_head_t **ppclst, insert_info_t *pinsert, ch
         printf("\r\n%d\t%s", __LINE__, __FUNCTION__);
         return SPT_NOMEM;
     }
+    pdh = (spt_dh *)pdata;
+    pdh->ref = 1;
+    pdata = pdata + sizeof(spt_dh);
     memcpy(pdata, new_data, DATA_SIZE);
 
     tmp_vec.val = pinsert->key_val;
@@ -627,7 +635,7 @@ int do_insert_rsignpost_down(cluster_head_t **ppclst, insert_info_t *pinsert, ch
     pvec_b->val = 0;
     pvec_b->flag = SPT_VEC_FLAG_DATA;
     pvec_b->pos = (pinsert->fs-1)&SPT_VEC_SIGNPOST_MASK;
-    pvec_b->rd = tmp_vec.rd;
+    pvec_b->rd = dataid;
     pvec_b->down = SPT_NULL;
     
     if((pinsert->fs-1)-signpost > SPT_VEC_SIGNPOST_MASK)
@@ -644,6 +652,10 @@ int do_insert_rsignpost_down(cluster_head_t **ppclst, insert_info_t *pinsert, ch
         pvec_s->rd = vecid_b;
 
         pvec_a->down = vecid_s;
+    }
+    else
+    {
+        pvec_a->down = vecid_b;
     }
 
     if(pinsert->key_val == atomic64_cmpxchg((atomic64_t *)pinsert->pkey_vec, 
@@ -669,6 +681,7 @@ int do_insert_first_set(cluster_head_t **ppclst, char *new_data)
     u32 dataid;
     char *pdata;
     spt_vec tmp_vec, cur_vec, *pcur;
+    spt_dh *pdh;
 
     dataid = db_alloc(ppclst, &pdata);
     if(pdata == 0)
@@ -678,6 +691,9 @@ int do_insert_first_set(cluster_head_t **ppclst, char *new_data)
         printf("\r\n%d\t%s", __LINE__, __FUNCTION__);
         return SPT_NOMEM;
     }
+    pdh = (spt_dh *)pdata;
+    pdh->ref = 1;
+    pdata = pdata + sizeof(spt_dh);
     memcpy(pdata, new_data, DATA_SIZE);
 
     pcur = (spt_vec *)vec_id_2_ptr(*ppclst,(*ppclst)->vec_head);
@@ -703,6 +719,7 @@ int do_insert_up_via_r(cluster_head_t **ppclst, insert_info_t *pinsert, char *ne
     u64 signpost;
     u32 dataid, vecid_a, vecid_b, vecid_s, vecid_s2;
     char *pdata;
+    spt_dh *pdh;
 
     pvec_s = 0;
     dataid = db_alloc(ppclst, &pdata);
@@ -713,6 +730,9 @@ int do_insert_up_via_r(cluster_head_t **ppclst, insert_info_t *pinsert, char *ne
         printf("\r\n%d\t%s", __LINE__, __FUNCTION__);
         return SPT_NOMEM;
     }
+    pdh = (spt_dh *)pdata;
+    pdh->ref = 1;
+    pdata = pdata + sizeof(spt_dh);
     memcpy(pdata, new_data, DATA_SIZE);
 
     tmp_vec.val = pinsert->key_val;
@@ -840,6 +860,7 @@ int do_insert_down_via_r(cluster_head_t **ppclst, insert_info_t *pinsert, char *
     u64 signpost;
     u32 dataid, vecid_a, vecid_b, vecid_s;
     char *pdata;
+    spt_dh *pdh;
 
     pvec_s = 0;
     dataid = db_alloc(ppclst, &pdata);
@@ -850,6 +871,9 @@ int do_insert_down_via_r(cluster_head_t **ppclst, insert_info_t *pinsert, char *
         printf("\r\n%d\t%s", __LINE__, __FUNCTION__);
         return SPT_NOMEM;
     }
+    pdh = (spt_dh *)pdata;
+    pdh->ref = 1;
+    pdata = pdata + sizeof(spt_dh);
     memcpy(pdata, new_data, DATA_SIZE);
 
     tmp_vec.val = pinsert->key_val;
@@ -865,7 +889,7 @@ int do_insert_down_via_r(cluster_head_t **ppclst, insert_info_t *pinsert, char *
     pvec_b->val = 0;
     pvec_b->flag = SPT_VEC_FLAG_DATA;
     pvec_b->pos = (pinsert->fs-1)&SPT_VEC_SIGNPOST_MASK;
-    pvec_b->rd = tmp_vec.rd;
+    pvec_b->rd = dataid;
     pvec_b->down = SPT_NULL;
 
     vecid_a = vec_alloc(ppclst, &pvec_a);
@@ -974,6 +998,7 @@ int do_insert_last_down(cluster_head_t **ppclst, insert_info_t *pinsert, char *n
     u64 signpost;
     u32 dataid, vecid_a, vecid_s;
     char *pdata;
+    spt_dh *pdh;
 
     pvec_s = 0;
     dataid = db_alloc(ppclst, &pdata);
@@ -984,10 +1009,13 @@ int do_insert_last_down(cluster_head_t **ppclst, insert_info_t *pinsert, char *n
         printf("\r\n%d\t%s", __LINE__, __FUNCTION__);
         return SPT_NOMEM;
     }
+    pdh = (spt_dh *)pdata;
+    pdh->ref = 1;
+    pdata = pdata + sizeof(spt_dh);
     memcpy(pdata, new_data, DATA_SIZE);
 
     tmp_vec.val = pinsert->key_val;
-    signpost = tmp_vec.idx << SPT_VEC_SIGNPOST_BIT;
+    signpost = pinsert->signpost;
 
     vecid_a = vec_alloc(ppclst, &pvec_a);
     if(pvec_a == 0)
@@ -1046,6 +1074,7 @@ int do_insert_up_via_d(cluster_head_t **ppclst, insert_info_t *pinsert, char *ne
     u64 signpost;
     u32 dataid, vecid_a, vecid_s;
     char *pdata;
+    spt_dh *pdh;
 
     pvec_s = 0;
     dataid = db_alloc(ppclst, &pdata);
@@ -1056,10 +1085,13 @@ int do_insert_up_via_d(cluster_head_t **ppclst, insert_info_t *pinsert, char *ne
         printf("\r\n%d\t%s", __LINE__, __FUNCTION__);
         return SPT_NOMEM;
     }
+    pdh = (spt_dh *)pdata;
+    pdh->ref = 1;
+    pdata = pdata + sizeof(spt_dh);
     memcpy(pdata, new_data, DATA_SIZE);
 
     tmp_vec.val = pinsert->key_val;
-    signpost = tmp_vec.idx << SPT_VEC_SIGNPOST_BIT;
+    signpost = pinsert->signpost;
 
     vecid_a = vec_alloc(ppclst, &pvec_a);
     if(pvec_a == 0)
@@ -1131,14 +1163,14 @@ int do_insert_up_via_d(cluster_head_t **ppclst, insert_info_t *pinsert, char *ne
 /*ret:1查询不到；0删除成功；-1错误*/
 int find_data(cluster_head_t **ppclst, query_info_t *pqinfo)
 {
-    u32 cur_data, vecid, cmp, op;
+    int cur_data, vecid, cmp, op;
     spt_vec *pcur, *pnext, *ppre;
     spt_vec tmp_vec, cur_vec, next_vec;
     char *pcur_data;//*ppre_data,
     u64 startbit, endbit, len, fs_pos, signpost;
     int va_old, va_new;
     u8 direction;
-    u32 ret = SPT_NOT_FOUND;
+    int ret = SPT_NOT_FOUND;
     vec_cmpret_t cmpres;
     insert_info_t st_insert_info;
     char *pdata;
@@ -3451,10 +3483,10 @@ void debug_id_vec_print(cluster_head_t *pclst, int id)
     return;
 }
 
-void debug_data_print(u8 *pdata)
+void debug_data_print(char *pdata)
 {
     int i;
-    u8 *p = pdata;
+    u8 *p = (u8 *)pdata;
     for(i = 0; i < DATA_SIZE; i++,p++)
     {
         if(i%8 == 0)
@@ -3464,6 +3496,23 @@ void debug_data_print(u8 *pdata)
         printf("%02x ", *p);
     }
     printf("\r\n");
+    return;
+}
+travl_info *debug_travl_stack_pop(spt_stack *p_stack)
+{
+    return (travl_info *)spt_stack_pop(p_stack);
+}
+
+
+void debug_travl_stack_destroy(spt_stack *p_stack)
+{
+    travl_info *node;
+    while(!spt_stack_empty(p_stack))
+    {
+        node = debug_travl_stack_pop(p_stack);
+        free(node);
+    }
+    spt_stack_destroy(p_stack);
     return;
 }
 
@@ -3480,12 +3529,8 @@ void debug_travl_stack_push(spt_stack *p_stack, spt_vec_f *pvec_f, long long sig
     }
     node->signpost = signpost;
     node->vec_f = *pvec_f;
-    spt_stack_push(p_stack,(int)node);
+    spt_stack_push(p_stack,node);
     return;
-}
-travl_info *debug_travl_stack_pop(spt_stack *p_stack)
-{
-    return (travl_info *)spt_stack_pop(p_stack);
 }
 
 
@@ -3498,30 +3543,32 @@ void debug_cluster_travl(cluster_head_t *pclst)
     spt_vec *pcur;
     spt_vec_f st_vec_f;
     spt_dh *pdh;
-    u8 *pcur_data = NULL;
+    char *pcur_data = NULL;
     u64 signpost;
     travl_info *pnode;
-    u16 rank, *prsv;
+    u16 rank;
 
     signpost = 0;
     spt_stack_init(pstack, 100);
     cur_data = -1;
 
-//    cur_vec = pclst->vec_head;
+    cur_vecid = pclst->vec_head;
     pcur = (spt_vec *)vec_id_2_ptr(pclst, pclst->vec_head);
 
     debug_get_final_vec(pclst, pcur, &st_vec_f, signpost, cur_data, SPT_RIGHT);
     if(pcur->down == SPT_NULL && pcur->rd == SPT_NULL)
     {
         printf("cluster is null\r\n");
+        debug_travl_stack_destroy(pstack);
         return;
     }
     rank = pclst->used_dblk_cnt;
-    
+    cur_data = st_vec_f.data;
     if(cur_data != -1)
     {
         pcur_data = db_id_2_ptr(pclst, cur_data) + sizeof(spt_dh);
     }
+    debug_vec_print(&st_vec_f, cur_vecid);
 #if 0
     if(st_vec_r.pos == 0)
     {
@@ -3571,6 +3618,7 @@ void debug_cluster_travl(cluster_head_t *pclst)
             //单个数据遍历完
             //spt_bit_cpy(data, pcur_data, bit, DATA_BIT_MAX - bit);
             //此时data应该等于插入的某个数
+            //debug_vec_print(&st_vec_f, cur_vecid);
             if(pcur_data != NULL)//head->right为空时，pcur_data等于空
             {
                 #if 0
@@ -3595,6 +3643,7 @@ void debug_cluster_travl(cluster_head_t *pclst)
                 if(pnode == (travl_info *)-1)
                 {
                     printf("\r\n");
+                    debug_travl_stack_destroy(pstack);
                     return;
                 }
                 signpost = pnode->signpost;
@@ -3618,7 +3667,7 @@ void debug_cluster_travl(cluster_head_t *pclst)
                         }
                     }
                     cur_data = st_vec_f.data;
-                    pcur_data = (u8 *)db_id_2_ptr(pclst, cur_data);
+                    pcur_data = (char *)db_id_2_ptr(pclst, cur_data) + sizeof(spt_dh);
                     printf("\r\n@@data[%p],bit:%lld\r\n", pcur_data, st_vec_f.pos);
                     debug_vec_print(&st_vec_f, cur_vecid);
                     debug_travl_stack_push(pstack,&st_vec_f, signpost);
@@ -3629,7 +3678,8 @@ void debug_cluster_travl(cluster_head_t *pclst)
             }
         }
     }
-    
+    debug_travl_stack_destroy(pstack);
+    return;
 }
 
 
@@ -4117,13 +4167,16 @@ typedef union spt_vec1
     unsigned long long data;
 }spt_vec_t1;
 
+u64 gdata;
 void *spt_thread(void *arg)
 {
     cpu_set_t mask;
-    int i, vec, *buf, db;
+    int i, *buf, db;
     u64 order_id;
-    spt_vec *pvec, *pid_2_ptr;
+    spt_vec *pvec;
+    //spt_vec *pvec, *pid_2_ptr;
     spt_dh *pdb, *pdbid_2_ptr;
+    query_info_t qinfo = {0};
 //    u64 start, end;
     i = (long)arg;
 
@@ -4136,12 +4189,18 @@ void *spt_thread(void *arg)
         printf("warning: could not set CPU affinity, continuing...\n");
     }
 
+    pvec = (spt_vec *)vec_id_2_ptr(pgclst, pgclst->vec_head);
+    qinfo.op = SPT_OP_INSERT;
+    qinfo.signpost = 0;
+    qinfo.start_vec = pvec;
+    qinfo.endbit = DATA_BIT_MAX;
+    qinfo.data = (char *)&gdata;
+    printf("writefn%d,start\n",i);
+//    spt_thread_start();
+#if 0
     buf = (int *)malloc(4*1000000);
     if(buf == NULL)
         spt_debug("OOM\r\n");
-    
-    printf("writefn%d,start\n",i);
-//    spt_thread_start();
 
     for(order_id=0;order_id<100;order_id ++)
     {
@@ -4188,11 +4247,15 @@ void *spt_thread(void *arg)
 
         #endif
     }
+#endif
 //    spt_thread_exit(g_thrd_id);
     spt_debug("test%d done\r\n", g_thrd_id);
     while(1)
     {
-        sleep(1);
+        debug_cluster_travl(pgclst);
+        printf("\r\n");
+        find_data(&pgclst,&qinfo);
+        //sleep(1);
     }
     return 0;    
 }
@@ -4206,7 +4269,7 @@ int main()
     cpu_set_t mask;
 
     CPU_ZERO(&mask); 
-    thread_num = 4;
+    thread_num = 1;
 
     pgclst = cluster_init(thread_num);
     if(pgclst == NULL)

@@ -77,6 +77,7 @@ char* blk_id_2_ptr(cluster_head_t *pclst, unsigned int id)
     else
     {
         printf("warning: %s: id is too big\r\n", __func__);
+        while(1);
         return 0;
     }
     

@@ -112,8 +112,8 @@ typedef struct spt_vec_t
             volatile unsigned long long valid:      1;
             volatile unsigned long long flag:       3;
             volatile unsigned long long pos:        14;
-            volatile unsigned long long down:       23;
-            volatile unsigned long long rd:         23;    
+            volatile long long down:       23;
+            volatile long long rd:         23;    
         };
         struct 
         {
@@ -121,7 +121,7 @@ typedef struct spt_vec_t
             volatile unsigned long long ext_sys_flg:        6;
             volatile unsigned long long ext_usr_flg:        6;
             volatile unsigned long long idx:                25;
-            volatile unsigned long long dummy_rd:           23;
+            volatile long long dummy_rd:           23;
         };
     };
 }spt_vec;
@@ -216,8 +216,8 @@ typedef struct spt_seek_path
 
 typedef struct spt_stack_st
 {
-    int *p_top;    /* ’ª∂•÷∏’Î */
-    int *p_bottom; /* ’ªµ◊÷∏’Î */
+    void **p_top;    /* ’ª∂•÷∏’Î */
+    void **p_bottom; /* ’ªµ◊÷∏’Î */
     int stack_size;    /* ’ª¥Û–° */
 }spt_stack;
 
