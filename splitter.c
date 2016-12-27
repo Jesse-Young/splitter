@@ -1187,7 +1187,7 @@ refind_start:
 refind_forward:
     ppre = NULL;
     cur_vec.val = pcur->val;
-    startbit = signpost + cur_vec.pos;
+    startbit = signpost + cur_vec.pos + 1;
     endbit = pqinfo->endbit;
     if(cur_vec.valid == SPT_VEC_INVALID || cur_vec.flag == SPT_VEC_FlAG_SIGNPOST)
     {
@@ -1202,7 +1202,7 @@ refind_forward:
     }
     direction = SPT_DIR_START;
 
-    fs_pos = find_fs(pdata, startbit, endbit);
+    fs_pos = find_fs(pdata, startbit-1, endbit-1)+1;
     
     while(startbit<endbit)
     {
@@ -1514,7 +1514,7 @@ refind_forward:
                 
             }
             
-            cmp = diff_identify(pdata, pcur_data, startbit, len, &cmpres);
+            cmp = diff_identify(pdata, pcur_data, startbit-1, len, &cmpres);
             if(cmp == 0)
             {
                 startbit += len;              
@@ -1528,7 +1528,7 @@ refind_forward:
                 cur_vec.val = next_vec.val;
                 direction = SPT_RIGHT;
                 ///TODO:startbit already >= DATA_BIT_MAX
-                fs_pos = find_fs(pdata, startbit, endbit - startbit);
+                fs_pos = find_fs(pdata, startbit-1, endbit - startbit)+1;
                 continue;
             }
             /*insert up*/
@@ -1540,8 +1540,8 @@ refind_forward:
                 case SPT_OP_INSERT:
                     st_insert_info.pkey_vec= pcur;
                     st_insert_info.key_val= cur_vec.val;
-                    st_insert_info.cmp_pos = cmpres.pos;
-                    st_insert_info.fs = cmpres.smallfs;
+                    st_insert_info.cmp_pos = cmpres.pos+1;
+                    st_insert_info.fs = cmpres.smallfs+1;
                     st_insert_info.signpost = signpost;
                     ret = do_insert_up_via_r(ppclst, &st_insert_info, pdata);
                     if(ret == SPT_DO_AGAIN)
@@ -1568,8 +1568,8 @@ refind_forward:
                 case SPT_OP_INSERT:
                     st_insert_info.pkey_vec= pcur;
                     st_insert_info.key_val= cur_vec.val;
-                    st_insert_info.cmp_pos = cmpres.pos;
-                    st_insert_info.fs = cmpres.smallfs;
+                    st_insert_info.cmp_pos = cmpres.pos+1;
+                    st_insert_info.fs = cmpres.smallfs+1;
                     st_insert_info.signpost = signpost;
                     ret = do_insert_down_via_r(ppclst, &st_insert_info, pdata);
                     if(ret == SPT_DO_AGAIN)
@@ -1907,7 +1907,7 @@ refind_forward:
         while(1)
         {
             va_old = pdh->ref;
-            if(va_old < 0)
+            if(va_old <= 0)
             {
                 goto refind_start;
             }
@@ -1921,9 +1921,9 @@ refind_forward:
         return ret;
     case SPT_OP_DELETE:
         va_old = atomic_sub_return(1,(atomic_t *)&pdh->ref);
-        if(va_old >= 0)
+        if(va_old > 0)
             return ret;
-        else if(va_old == -1)
+        else if(va_old == 0)
         {
             //delete the only first set data
             if(ppre == NULL)
@@ -4168,6 +4168,7 @@ typedef union spt_vec1
 }spt_vec_t1;
 
 u64 gdata;
+query_info_t g_qinfo = {0};
 void *spt_thread(void *arg)
 {
     cpu_set_t mask;
@@ -4176,7 +4177,7 @@ void *spt_thread(void *arg)
     spt_vec *pvec;
     //spt_vec *pvec, *pid_2_ptr;
     spt_dh *pdb, *pdbid_2_ptr;
-    query_info_t qinfo = {0};
+    
 //    u64 start, end;
     i = (long)arg;
 
@@ -4188,13 +4189,13 @@ void *spt_thread(void *arg)
     {
         printf("warning: could not set CPU affinity, continuing...\n");
     }
-
+    gdata = 0xee;
     pvec = (spt_vec *)vec_id_2_ptr(pgclst, pgclst->vec_head);
-    qinfo.op = SPT_OP_INSERT;
-    qinfo.signpost = 0;
-    qinfo.start_vec = pvec;
-    qinfo.endbit = DATA_BIT_MAX;
-    qinfo.data = (char *)&gdata;
+    g_qinfo.op = SPT_OP_INSERT;
+    g_qinfo.signpost = 0;
+    g_qinfo.start_vec = pvec;
+    g_qinfo.endbit = DATA_BIT_MAX+1;
+    g_qinfo.data = (char *)&gdata;
     printf("writefn%d,start\n",i);
 //    spt_thread_start();
 #if 0
@@ -4254,7 +4255,7 @@ void *spt_thread(void *arg)
     {
         debug_cluster_travl(pgclst);
         printf("\r\n");
-        find_data(&pgclst,&qinfo);
+        find_data(&pgclst,&g_qinfo);
         //sleep(1);
     }
     return 0;    
