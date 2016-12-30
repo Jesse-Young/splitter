@@ -78,6 +78,9 @@ typedef struct cluster_head
     unsigned int free_dblk_cnt;
     unsigned int used_vec_cnt;
     unsigned int used_dblk_cnt;
+    unsigned int buf_db_cnt;
+    unsigned int buf_vec_cnt;
+    
     unsigned int debug;
     
     volatile char *pglist[0];
@@ -263,6 +266,22 @@ typedef struct spt_test_file_head
     char rsv[24];
 }test_file_h;
 
+typedef struct spt_dbg_info_st
+{
+    u64 oom_no_pgs;
+    u64 oom_no_db;
+    u64 oom_no_vec;
+
+    u64 find_data;
+    u64 refind_start;
+    u64 refind_forward;
+
+    u64 insert_ok;
+    u64 insert_fail;
+    u64 delete_ok;
+    u64 delete_fail;
+    
+}spt_dbg_info;
 
 //#define DBLK_BITS 3
 #define DATA_SIZE 8
@@ -280,6 +299,6 @@ void vec_list_free(cluster_head_t *pcluster, int id);
 void db_free(cluster_head_t *pcluster, int id);
 
 extern spt_thrd_t *g_thrd_h;
-
+extern spt_dbg_info g_dbg_info;
 
 #endif

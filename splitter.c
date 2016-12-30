@@ -27,6 +27,13 @@ __thread u32 g_thrd_id;
 cluster_head_t *pgclst;
 spt_thrd_t *g_thrd_h;
 
+
+spt_dbg_info g_dbg_info;
+#define DBG_DATA_NUM 10
+u64 g_data[DBG_DATA_NUM]={0xee,0xbe,0xba,0xb6,0xae,
+                          0xca,0x91,0x8a,0x36,0x06};
+
+
 u64 find_fs(char *a, u64 start, u64 len);
 int diff_identify(char *a, char *b,u64 start, u64 len, vec_cmpret_t *result);
 
@@ -536,8 +543,7 @@ int do_insert_dsignpost_right(cluster_head_t **ppclst, insert_info_t *pinsert, c
     dataid = db_alloc(ppclst, &pdata);
     if(pdata == 0)
     {
-        /*申请新块，拆分*/
-        assert(0);
+        atomic64_add(1,(atomic64_t *)&g_dbg_info.oom_no_db);
         printf("\r\n%d\t%s", __LINE__, __FUNCTION__);
         return SPT_NOMEM;
     }
@@ -586,7 +592,8 @@ int do_insert_rsignpost_down(cluster_head_t **ppclst, insert_info_t *pinsert, ch
     u32 dataid, vecid_a, vecid_b, vecid_s;
     char *pdata;
     spt_dh *pdh;
-    
+
+    pvec_s = 0;
     dataid = db_alloc(ppclst, &pdata);
     if(pdata == 0)
     {
@@ -607,6 +614,7 @@ int do_insert_rsignpost_down(cluster_head_t **ppclst, insert_info_t *pinsert, ch
     if(pvec_a == 0)
     {
         /*yzx释放资源， 申请新块，拆分*/
+        atomic64_add(1,(atomic64_t *)&g_dbg_info.oom_no_db);
         db_free(*ppclst, dataid);
         return SPT_NOMEM;
     }
@@ -629,7 +637,9 @@ int do_insert_rsignpost_down(cluster_head_t **ppclst, insert_info_t *pinsert, ch
     if(pvec_b == 0)
     {
         /*yzx释放资源， 申请新块，拆分*/
+        atomic64_add(1,(atomic64_t *)&g_dbg_info.oom_no_vec);
         db_free(*ppclst, dataid);
+        vec_free (*ppclst, vecid_a);
         return SPT_NOMEM;
     }
     pvec_b->val = 0;
@@ -644,7 +654,10 @@ int do_insert_rsignpost_down(cluster_head_t **ppclst, insert_info_t *pinsert, ch
         if(pvec_s == 0)
         {
             /*yzx释放资源， 申请新块，拆分*/
+            atomic64_add(1,(atomic64_t *)&g_dbg_info.oom_no_db);
             db_free(*ppclst, dataid);
+            vec_free(*ppclst, vecid_a);
+            vec_free(*ppclst, vecid_b);
             return SPT_NOMEM;
         }
         pvec_s->val = 0;        
@@ -687,7 +700,7 @@ int do_insert_first_set(cluster_head_t **ppclst, char *new_data)
     if(pdata == 0)
     {
         /*申请新块，拆分*/
-        assert(0);
+        atomic64_add(1,(atomic64_t *)&g_dbg_info.oom_no_db);
         printf("\r\n%d\t%s", __LINE__, __FUNCTION__);
         return SPT_NOMEM;
     }
@@ -722,11 +735,12 @@ int do_insert_up_via_r(cluster_head_t **ppclst, insert_info_t *pinsert, char *ne
     spt_dh *pdh;
 
     pvec_s = 0;
+    pvec_s2 = 0;
     dataid = db_alloc(ppclst, &pdata);
     if(pdata == 0)
     {
         /*申请新块，拆分*/
-        assert(0);
+        atomic64_add(1,(atomic64_t *)&g_dbg_info.oom_no_db);
         printf("\r\n%d\t%s", __LINE__, __FUNCTION__);
         return SPT_NOMEM;
     }
@@ -742,6 +756,7 @@ int do_insert_up_via_r(cluster_head_t **ppclst, insert_info_t *pinsert, char *ne
     if(pvec_b == 0)
     {
         /*yzx释放资源， 申请新块，拆分*/
+        atomic64_add(1,(atomic64_t *)&g_dbg_info.oom_no_vec);
         db_free(*ppclst, dataid);
         return SPT_NOMEM;
     }
@@ -755,7 +770,9 @@ int do_insert_up_via_r(cluster_head_t **ppclst, insert_info_t *pinsert, char *ne
     if(pvec_a == 0)
     {
         /*yzx释放资源， 申请新块，拆分*/
+        atomic64_add(1,(atomic64_t *)&g_dbg_info.oom_no_vec);
         db_free(*ppclst, dataid);
+        vec_free(*ppclst, vecid_b);
         return SPT_NOMEM;
     }
     pvec_a->val = 0;
@@ -795,7 +812,10 @@ int do_insert_up_via_r(cluster_head_t **ppclst, insert_info_t *pinsert, char *ne
         if(pvec_s == 0)
         {
             /*yzx释放资源， 申请新块，拆分*/
+            atomic64_add(1,(atomic64_t *)&g_dbg_info.oom_no_vec);
             db_free(*ppclst, dataid);
+            vec_free(*ppclst, vecid_a);
+            vec_free(*ppclst, vecid_b);
             return SPT_NOMEM;
         }
         pvec_s->val = 0;
@@ -817,7 +837,14 @@ int do_insert_up_via_r(cluster_head_t **ppclst, insert_info_t *pinsert, char *ne
         if(pvec_s2 == 0)
         {
             /*yzx释放资源， 申请新块，拆分*/
+            atomic64_add(1,(atomic64_t *)&g_dbg_info.oom_no_vec);
             db_free(*ppclst, dataid);
+            vec_free(*ppclst, vecid_a);
+            vec_free(*ppclst, vecid_b);
+            if(pvec_s != 0)
+            {
+                vec_free(*ppclst, vecid_s);
+            }            
             return SPT_NOMEM;
         }
         pvec_s2->val = 0;        
@@ -868,7 +895,7 @@ int do_insert_down_via_r(cluster_head_t **ppclst, insert_info_t *pinsert, char *
     {
         /*申请新块，拆分*/
         assert(0);
-        printf("\r\n%d\t%s", __LINE__, __FUNCTION__);
+        atomic64_add(1,(atomic64_t *)&g_dbg_info.oom_no_db);
         return SPT_NOMEM;
     }
     pdh = (spt_dh *)pdata;
@@ -883,6 +910,7 @@ int do_insert_down_via_r(cluster_head_t **ppclst, insert_info_t *pinsert, char *
     if(pvec_b == 0)
     {
         /*yzx释放资源， 申请新块，拆分*/
+        atomic64_add(1,(atomic64_t *)&g_dbg_info.oom_no_vec);
         db_free(*ppclst, dataid);
         return SPT_NOMEM;
     }
@@ -896,7 +924,9 @@ int do_insert_down_via_r(cluster_head_t **ppclst, insert_info_t *pinsert, char *
     if(pvec_a == 0)
     {
         /*yzx释放资源， 申请新块，拆分*/
+        atomic64_add(1,(atomic64_t *)&g_dbg_info.oom_no_vec);
         db_free(*ppclst, dataid);
+        vec_free(*ppclst, vecid_b);
         return SPT_NOMEM;
     }
     pvec_a->val = 0;
@@ -936,7 +966,10 @@ int do_insert_down_via_r(cluster_head_t **ppclst, insert_info_t *pinsert, char *
         if(pvec_s == 0)
         {
             /*yzx释放资源， 申请新块，拆分*/
+            atomic64_add(1,(atomic64_t *)&g_dbg_info.oom_no_vec);
             db_free(*ppclst, dataid);
+            vec_free(*ppclst, vecid_a);
+            vec_free(*ppclst, vecid_b);
             return SPT_NOMEM;
         }
         pvec_s->val = 0;
@@ -954,7 +987,10 @@ int do_insert_down_via_r(cluster_head_t **ppclst, insert_info_t *pinsert, char *
         if(pvec_s == 0)
         {
             /*yzx释放资源， 申请新块，拆分*/
+            atomic64_add(1,(atomic64_t *)&g_dbg_info.oom_no_vec);
             db_free(*ppclst, dataid);
+            vec_free(*ppclst, vecid_a);
+            vec_free(*ppclst, vecid_b);
             return SPT_NOMEM;
         }
         pvec_s->val = 0;        
@@ -1006,7 +1042,7 @@ int do_insert_last_down(cluster_head_t **ppclst, insert_info_t *pinsert, char *n
     {
         /*申请新块，拆分*/
         assert(0);
-        printf("\r\n%d\t%s", __LINE__, __FUNCTION__);
+        atomic64_add(1,(atomic64_t *)&g_dbg_info.oom_no_db);
         return SPT_NOMEM;
     }
     pdh = (spt_dh *)pdata;
@@ -1021,6 +1057,7 @@ int do_insert_last_down(cluster_head_t **ppclst, insert_info_t *pinsert, char *n
     if(pvec_a == 0)
     {
         /*yzx释放资源， 申请新块，拆分*/
+        atomic64_add(1,(atomic64_t *)&g_dbg_info.oom_no_vec);
         db_free(*ppclst, dataid);
         return SPT_NOMEM;
     }
@@ -1036,7 +1073,9 @@ int do_insert_last_down(cluster_head_t **ppclst, insert_info_t *pinsert, char *n
         if(pvec_s == 0)
         {
             /*yzx释放资源， 申请新块，拆分*/
+            atomic64_add(1,(atomic64_t *)&g_dbg_info.oom_no_vec);
             db_free(*ppclst, dataid);
+            vec_free(*ppclst, vecid_a);
             return SPT_NOMEM;
         }
         pvec_s->val = 0;        
@@ -1082,7 +1121,7 @@ int do_insert_up_via_d(cluster_head_t **ppclst, insert_info_t *pinsert, char *ne
     {
         /*申请新块，拆分*/
         assert(0);
-        printf("\r\n%d\t%s", __LINE__, __FUNCTION__);
+        atomic64_add(1,(atomic64_t *)&g_dbg_info.oom_no_db);
         return SPT_NOMEM;
     }
     pdh = (spt_dh *)pdata;
@@ -1097,6 +1136,7 @@ int do_insert_up_via_d(cluster_head_t **ppclst, insert_info_t *pinsert, char *ne
     if(pvec_a == 0)
     {
         /*yzx释放资源， 申请新块，拆分*/
+        atomic64_add(1,(atomic64_t *)&g_dbg_info.oom_no_vec);
         db_free(*ppclst, dataid);
         return SPT_NOMEM;
     }
@@ -1111,7 +1151,9 @@ int do_insert_up_via_d(cluster_head_t **ppclst, insert_info_t *pinsert, char *ne
         if(pvec_s == 0)
         {
             /*yzx释放资源， 申请新块，拆分*/
+            atomic64_add(1,(atomic64_t *)&g_dbg_info.oom_no_vec);
             db_free(*ppclst, dataid);
+            vec_free(*ppclst, vecid_a);
             return SPT_NOMEM;
         }
         pvec_s->val = 0;        
@@ -1178,13 +1220,19 @@ int find_data(cluster_head_t **ppclst, query_info_t *pqinfo)
 //    query_info_t *pqinfo = pquery_info;
     op = pqinfo->op;
 
+    atomic64_add(1,(atomic64_t *)&g_dbg_info.find_data);
+
+
 refind_start:
+    atomic64_add(1,(atomic64_t *)&g_dbg_info.refind_start);
     pdata = pqinfo->data;
     signpost = pqinfo->signpost;
-    cur_data = SPT_INVALID;
     pcur = pqinfo->start_vec;
 
 refind_forward:
+    if(pcur == NULL)
+        goto refind_start;
+    atomic64_add(1,(atomic64_t *)&g_dbg_info.refind_forward);
     ppre = NULL;
     cur_vec.val = pcur->val;
     startbit = signpost + cur_vec.pos + 1;
@@ -1201,6 +1249,7 @@ refind_forward:
         }
     }
     direction = SPT_DIR_START;
+    cur_data = SPT_INVALID;
 
     fs_pos = find_fs(pdata, startbit-1, endbit-1)+1;
     
@@ -1249,6 +1298,7 @@ refind_forward:
                     if(cur_vec.val == atomic64_cmpxchg((atomic64_t *)pcur, cur_vec.val, tmp_vec.val))//delete succ
                     {
                         vec_free_to_buf(*ppclst, vecid, g_thrd_id);
+                        ///TODO:取新值后再continue
                         continue;
                     }
                     else//delete fail
@@ -1939,6 +1989,7 @@ refind_forward:
                 }
                 else
                 {
+                    ///TODO:并发的线程已经减为负数了怎么办?
                     atomic_add_return(1,(atomic_t *)&pdh->ref);
                     goto refind_start;
                 }
@@ -1970,6 +2021,38 @@ refind_forward:
         break;
     }
     return SPT_ERR;
+}
+
+int insert_data(cluster_head_t **ppclst, char *pdata)
+{
+    query_info_t qinfo = {0};
+    spt_vec *pvec_start;
+
+    pvec_start = (spt_vec *)vec_id_2_ptr(*ppclst, (*ppclst)->vec_head);
+    
+    qinfo.op = SPT_OP_INSERT;
+    qinfo.signpost = 0;
+    qinfo.start_vec = pvec_start;
+    qinfo.endbit = DATA_BIT_MAX+1;
+    qinfo.data = pdata;
+
+    return find_data(ppclst,&qinfo);
+}
+
+int delete_data(cluster_head_t **ppclst, char *pdata)
+{
+    query_info_t qinfo = {0};
+    spt_vec *pvec_start;
+
+    pvec_start = (spt_vec *)vec_id_2_ptr(*ppclst, (*ppclst)->vec_head);
+    
+    qinfo.op = SPT_OP_DELETE;
+    qinfo.signpost = 0;
+    qinfo.start_vec = pvec_start;
+    qinfo.endbit = DATA_BIT_MAX+1;
+    qinfo.data = pdata;
+
+    return find_data(ppclst,&qinfo);
 }
 
 #ifdef _BIG_ENDIAN
@@ -3390,11 +3473,13 @@ void spt_thread_exit(int thread)
         type = cmd >> 32;
         freeid = cmd & SPT_PTR_MASK;
         if(type == SPT_PTR_VEC)
-        {
+        {            
+            atomic_sub(1, (atomic_t *)&pgclst->buf_vec_cnt);
             vec_free(pgclst, freeid);
         }
         else
         {
+            atomic_sub(1, (atomic_t *)&pgclst->buf_db_cnt);
             db_free(pgclst, freeid);
         }
     }
@@ -4147,36 +4232,16 @@ int main()
 #else
 #include <stdio.h>
 
-typedef union spt_vec1
-{
-    struct normal_vec
-    {
-        unsigned long long flag:     4;
-        unsigned long long pos:      14; /*鑷冲皯4瀛楄妭鎵嶅right or dataid or next*/
-        unsigned long long rd:       23;    /*8表示是一个向量串，rdn表示next；1表示rdn是right；0表明rdn是dataid*/
-        unsigned long long down:     23;
-    }normal;
-    struct sign_vec
-    {
-        unsigned long long flag:        4;
-        unsigned long long ext_sys_flg:           6;
-        unsigned long long ext_usr_flg:           6;
-        unsigned long long dr:                  23;
-        unsigned long long pos:                 25;
-    }sign;
-    unsigned long long data;
-}spt_vec_t1;
-
 u64 gdata;
 query_info_t g_qinfo = {0};
 void *spt_thread(void *arg)
 {
     cpu_set_t mask;
-    int i, *buf, db;
-    u64 order_id;
+    int i,j, ret;
+//    u64 order_id;
     spt_vec *pvec;
     //spt_vec *pvec, *pid_2_ptr;
-    spt_dh *pdb, *pdbid_2_ptr;
+    //spt_dh *pdb, *pdbid_2_ptr;
     
 //    u64 start, end;
     i = (long)arg;
@@ -4189,6 +4254,7 @@ void *spt_thread(void *arg)
     {
         printf("warning: could not set CPU affinity, continuing...\n");
     }
+#if   0  
     gdata = 0xee;
     pvec = (spt_vec *)vec_id_2_ptr(pgclst, pgclst->vec_head);
     g_qinfo.op = SPT_OP_INSERT;
@@ -4196,6 +4262,7 @@ void *spt_thread(void *arg)
     g_qinfo.start_vec = pvec;
     g_qinfo.endbit = DATA_BIT_MAX+1;
     g_qinfo.data = (char *)&gdata;
+#endif
     printf("writefn%d,start\n",i);
 //    spt_thread_start();
 #if 0
@@ -4249,14 +4316,43 @@ void *spt_thread(void *arg)
         #endif
     }
 #endif
+
+    for(i=0;i<1;i++)
+    {
+        spt_thread_start();
+        for(j=0;j<DBG_DATA_NUM;j++)
+        {
+            ret = insert_data(&pgclst, (char *)&g_data[j]);
+            if(ret == SPT_OK)
+            {
+                atomic64_add(1,(atomic64_t *)&g_dbg_info.insert_ok);
+            }
+            else
+            {
+                atomic64_add(1,(atomic64_t *)&g_dbg_info.insert_fail);
+            }
+        }
+        #if 0
+        for(j=0;j<DBG_DATA_NUM;j++)
+        {
+            ret = delete_data(&pgclst, (char *)&g_data[j]);
+            if(ret == SPT_OK)
+            {
+                atomic64_add(1,(atomic64_t *)&g_dbg_info.delete_ok);
+            }
+            else
+            {
+                atomic64_add(1,(atomic64_t *)&g_dbg_info.delete_fail);
+            }
+        }
+        #endif
+        spt_thread_exit(g_thrd_id);
+    }
 //    spt_thread_exit(g_thrd_id);
     spt_debug("test%d done\r\n", g_thrd_id);
     while(1)
     {
-        debug_cluster_travl(pgclst);
-        printf("\r\n");
-        find_data(&pgclst,&g_qinfo);
-        //sleep(1);
+
     }
     return 0;    
 }

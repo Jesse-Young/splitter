@@ -172,7 +172,8 @@ int cluster_add_page(cluster_head_t **ppclst)
             indir_page = (char **)cluster_alloc_page();
             if(indir_page == NULL)
             {
-                printf("\r\nOUT OF MEMERY    %d\t%s", __LINE__, __FUNCTION__);
+                //printf("\r\nOUT OF MEMERY    %d\t%s", __LINE__, __FUNCTION__);
+                atomic64_add(1,(atomic64_t *)&g_dbg_info.oom_no_pgs);
                 return CLT_NOMEM;
             }
             pclst->pglist[CLST_IND_PG] = (char *)indir_page;
@@ -197,7 +198,8 @@ int cluster_add_page(cluster_head_t **ppclst)
             dindir_page = (char ***)cluster_alloc_page();
             if(dindir_page == NULL)
             {
-                printf("\r\nOUT OF MEMERY    %d\t%s", __LINE__, __FUNCTION__);
+                //printf("\r\nOUT OF MEMERY    %d\t%s", __LINE__, __FUNCTION__);
+                atomic64_add(1,(atomic64_t *)&g_dbg_info.oom_no_pgs);
                 return CLT_NOMEM;
             }
             pclst->pglist[CLST_DIND_PG] = (char *)dindir_page;
@@ -217,7 +219,8 @@ int cluster_add_page(cluster_head_t **ppclst)
             indir_page = (char **)cluster_alloc_page();
             if(indir_page == NULL)
             {
-                printf("\r\nOUT OF MEMERY    %d\t%s", __LINE__, __FUNCTION__);
+                //printf("\r\nOUT OF MEMERY    %d\t%s", __LINE__, __FUNCTION__);
+                atomic64_add(1,(atomic64_t *)&g_dbg_info.oom_no_pgs);
                 return CLT_NOMEM;
             }
             else
@@ -539,7 +542,8 @@ void vec_free_to_buf(cluster_head_t *pcluster, int id, int thread_id)
     cmd = id;
     q_idx = atomic64_add_return(1, (atomic64_t *)&g_thrd_h->free_q_idx)-1;
 
-    lfo_inq(g_thrd_h->pfree_q, thread_id, cmd, q_idx);
+    lfo_inq(g_thrd_h->pfree_q, thread_id, cmd, q_idx);    
+    atomic_add(1, (atomic_t *)&pcluster->buf_vec_cnt);
     return ;
 
 }
@@ -552,6 +556,7 @@ void db_free_to_buf(cluster_head_t *pcluster, int id, int thread_id)
     q_idx = atomic64_add_return(1, (atomic64_t *)&g_thrd_h->free_q_idx)-1;
 
     lfo_inq(g_thrd_h->pfree_q, thread_id, cmd, q_idx);
+    atomic_add(1, (atomic_t *)&pcluster->buf_db_cnt);    
     return ;
 }
 
