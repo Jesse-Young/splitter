@@ -126,8 +126,8 @@ extern char* db_id_2_ptr(cluster_head_t *pclst, unsigned int id);
 extern char* vec_id_2_ptr(cluster_head_t *pclst, unsigned int id);
 #endif
 
-#define SPT_NULL -1
-#define SPT_INVALID -2
+#define SPT_NULL 0x7fffff
+#define SPT_INVALID 0x7ffffe
 
 #define SPT_DIR_START 0
 #define SPT_RIGHT 1

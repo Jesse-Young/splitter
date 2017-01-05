@@ -115,8 +115,8 @@ typedef struct spt_vec_t
             volatile unsigned long long valid:      1;
             volatile unsigned long long flag:       3;
             volatile unsigned long long pos:        14;
-            volatile long long down:       23;
-            volatile long long rd:         23;    
+            volatile unsigned long long down:       23;
+            volatile unsigned long long rd:         23;    
         };
         struct 
         {
@@ -164,7 +164,7 @@ typedef struct spt_insert_info
     u64 startbit;
     u64 fs;
     u64 cmp_pos;
-    u64 len;
+    u64 endbit;//not include
 }insert_info_t;
 
 

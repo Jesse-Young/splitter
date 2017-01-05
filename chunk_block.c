@@ -305,9 +305,9 @@ cluster_head_t * cluster_init()
     phead->blk_per_pg = PG_SIZE/BLK_SIZE;
     phead->db_per_blk= BLK_SIZE/DBLK_SIZE; /*如果不对齐，剩余空间浪费*/
     phead->vec_per_blk = BLK_SIZE/VBLK_SIZE;
-    phead->vec_free_head = SPT_NULL;
-    phead->blk_free_head = SPT_NULL;
-    phead->dblk_free_head = SPT_NULL;
+    phead->vec_free_head = -1;
+    phead->blk_free_head = -1;
+    phead->dblk_free_head = -1;
     
     phead->debug = 1;
 
