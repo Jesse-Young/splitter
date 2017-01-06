@@ -560,6 +560,7 @@ int do_insert_dsignpost_right(cluster_head_t **ppclst, insert_info_t *pinsert, c
     {
         /*yzx释放资源， 申请新块，拆分*/
         db_free(*ppclst, dataid);
+        printf("\r\n%d\t%s", __LINE__, __FUNCTION__);
         return SPT_NOMEM;
     }
     pvec_a->val = 0;
@@ -598,7 +599,7 @@ int do_insert_rsignpost_down(cluster_head_t **ppclst, insert_info_t *pinsert, ch
     if(pdata == 0)
     {
         /*申请新块，拆分*/
-        assert(0);
+        //assert(0);
         printf("\r\n%d\t%s", __LINE__, __FUNCTION__);
         return SPT_NOMEM;
     }
@@ -614,6 +615,7 @@ int do_insert_rsignpost_down(cluster_head_t **ppclst, insert_info_t *pinsert, ch
     if(pvec_a == 0)
     {
         /*yzx释放资源， 申请新块，拆分*/
+        printf("\r\n%d\t%s", __LINE__, __FUNCTION__);
         atomic64_add(1,(atomic64_t *)&g_dbg_info.oom_no_db);
         db_free(*ppclst, dataid);
         return SPT_NOMEM;
@@ -638,6 +640,7 @@ int do_insert_rsignpost_down(cluster_head_t **ppclst, insert_info_t *pinsert, ch
     {
         /*yzx释放资源， 申请新块，拆分*/
         atomic64_add(1,(atomic64_t *)&g_dbg_info.oom_no_vec);
+        printf("\r\n%d\t%s", __LINE__, __FUNCTION__);
         db_free(*ppclst, dataid);
         vec_free (*ppclst, vecid_a);
         return SPT_NOMEM;
@@ -655,6 +658,7 @@ int do_insert_rsignpost_down(cluster_head_t **ppclst, insert_info_t *pinsert, ch
         {
             /*yzx释放资源， 申请新块，拆分*/
             atomic64_add(1,(atomic64_t *)&g_dbg_info.oom_no_db);
+            printf("\r\n%d\t%s", __LINE__, __FUNCTION__);
             db_free(*ppclst, dataid);
             vec_free(*ppclst, vecid_a);
             vec_free(*ppclst, vecid_b);
@@ -762,6 +766,7 @@ int do_insert_up_via_r(cluster_head_t **ppclst, insert_info_t *pinsert, char *ne
     {
         /*yzx释放资源， 申请新块，拆分*/
         atomic64_add(1,(atomic64_t *)&g_dbg_info.oom_no_vec);
+        printf("\r\n%d\t%s", __LINE__, __FUNCTION__);
         db_free(*ppclst, dataid);
         return SPT_NOMEM;
     }
@@ -777,6 +782,7 @@ int do_insert_up_via_r(cluster_head_t **ppclst, insert_info_t *pinsert, char *ne
         {
             /*yzx释放资源， 申请新块，拆分*/
             atomic64_add(1,(atomic64_t *)&g_dbg_info.oom_no_vec);
+            printf("\r\n%d\t%s", __LINE__, __FUNCTION__);
             db_free(*ppclst, dataid);
             vec_free(*ppclst, vecid_a);
             return SPT_NOMEM;
@@ -785,7 +791,7 @@ int do_insert_up_via_r(cluster_head_t **ppclst, insert_info_t *pinsert, char *ne
         pvec_s->idx = (pinsert->cmp_pos-1)>>SPT_VEC_SIGNPOST_BIT;
         pvec_s->rd = vecid_a;
     
-        pvec_a->down = vecid_b;
+        //pvec_a->down = vecid_b;
     
         tmp_vec.rd = vecid_s;
         signpost = pvec_s->idx << SPT_VEC_SIGNPOST_BIT;
@@ -810,6 +816,7 @@ int do_insert_up_via_r(cluster_head_t **ppclst, insert_info_t *pinsert, char *ne
         {
             /*yzx释放资源， 申请新块，拆分*/
             atomic64_add(1,(atomic64_t *)&g_dbg_info.oom_no_vec);
+            printf("\r\n%d\t%s", __LINE__, __FUNCTION__);
             db_free(*ppclst, dataid);
             vec_free(*ppclst, vecid_a);
             if(pvec_s != 0)
@@ -837,7 +844,8 @@ int do_insert_up_via_r(cluster_head_t **ppclst, insert_info_t *pinsert, char *ne
                 if(pvec_s != 0)
                 {
                     vec_free(*ppclst, vecid_s);
-                }            
+                }
+                printf("\r\n%d\t%s", __LINE__, __FUNCTION__);
                 return SPT_NOMEM;
             }
             pvec_s2->val = 0;        
@@ -901,7 +909,8 @@ int do_insert_down_via_r(cluster_head_t **ppclst, insert_info_t *pinsert, char *
     if(pdata == 0)
     {
         /*申请新块，拆分*/
-        assert(0);
+        //assert(0);
+        printf("\r\n%d\t%s", __LINE__, __FUNCTION__);
         atomic64_add(1,(atomic64_t *)&g_dbg_info.oom_no_db);
         return SPT_NOMEM;
     }
@@ -917,6 +926,7 @@ int do_insert_down_via_r(cluster_head_t **ppclst, insert_info_t *pinsert, char *
     if(pvec_b == 0)
     {
         /*yzx释放资源， 申请新块，拆分*/
+        printf("\r\n%d\t%s", __LINE__, __FUNCTION__);
         atomic64_add(1,(atomic64_t *)&g_dbg_info.oom_no_vec);
         db_free(*ppclst, dataid);
         return SPT_NOMEM;
@@ -932,6 +942,7 @@ int do_insert_down_via_r(cluster_head_t **ppclst, insert_info_t *pinsert, char *
     {
         /*yzx释放资源， 申请新块，拆分*/
         atomic64_add(1,(atomic64_t *)&g_dbg_info.oom_no_vec);
+        printf("\r\n%d\t%s", __LINE__, __FUNCTION__);
         db_free(*ppclst, dataid);
         vec_free(*ppclst, vecid_b);
         return SPT_NOMEM;
@@ -974,6 +985,7 @@ int do_insert_down_via_r(cluster_head_t **ppclst, insert_info_t *pinsert, char *
         {
             /*yzx释放资源， 申请新块，拆分*/
             atomic64_add(1,(atomic64_t *)&g_dbg_info.oom_no_vec);
+            printf("\r\n%d\t%s", __LINE__, __FUNCTION__);
             db_free(*ppclst, dataid);
             vec_free(*ppclst, vecid_a);
             vec_free(*ppclst, vecid_b);
@@ -995,6 +1007,7 @@ int do_insert_down_via_r(cluster_head_t **ppclst, insert_info_t *pinsert, char *
         {
             /*yzx释放资源， 申请新块，拆分*/
             atomic64_add(1,(atomic64_t *)&g_dbg_info.oom_no_vec);
+            printf("\r\n%d\t%s", __LINE__, __FUNCTION__);
             db_free(*ppclst, dataid);
             vec_free(*ppclst, vecid_a);
             vec_free(*ppclst, vecid_b);
@@ -1048,7 +1061,8 @@ int do_insert_last_down(cluster_head_t **ppclst, insert_info_t *pinsert, char *n
     if(pdata == 0)
     {
         /*申请新块，拆分*/
-        assert(0);
+        //assert(0);
+        printf("\r\n%d\t%s", __LINE__, __FUNCTION__);
         atomic64_add(1,(atomic64_t *)&g_dbg_info.oom_no_db);
         return SPT_NOMEM;
     }
@@ -1065,6 +1079,7 @@ int do_insert_last_down(cluster_head_t **ppclst, insert_info_t *pinsert, char *n
     {
         /*yzx释放资源， 申请新块，拆分*/
         atomic64_add(1,(atomic64_t *)&g_dbg_info.oom_no_vec);
+        printf("\r\n%d\t%s", __LINE__, __FUNCTION__);
         db_free(*ppclst, dataid);
         return SPT_NOMEM;
     }
@@ -1081,6 +1096,7 @@ int do_insert_last_down(cluster_head_t **ppclst, insert_info_t *pinsert, char *n
         {
             /*yzx释放资源， 申请新块，拆分*/
             atomic64_add(1,(atomic64_t *)&g_dbg_info.oom_no_vec);
+            printf("\r\n%d\t%s", __LINE__, __FUNCTION__);
             db_free(*ppclst, dataid);
             vec_free(*ppclst, vecid_a);
             return SPT_NOMEM;
@@ -1127,7 +1143,8 @@ int do_insert_up_via_d(cluster_head_t **ppclst, insert_info_t *pinsert, char *ne
     if(pdata == 0)
     {
         /*申请新块，拆分*/
-        assert(0);
+        //assert(0);
+        printf("\r\n%d\t%s", __LINE__, __FUNCTION__);
         atomic64_add(1,(atomic64_t *)&g_dbg_info.oom_no_db);
         return SPT_NOMEM;
     }
@@ -1144,6 +1161,7 @@ int do_insert_up_via_d(cluster_head_t **ppclst, insert_info_t *pinsert, char *ne
     {
         /*yzx释放资源， 申请新块，拆分*/
         atomic64_add(1,(atomic64_t *)&g_dbg_info.oom_no_vec);
+        printf("\r\n%d\t%s", __LINE__, __FUNCTION__);
         db_free(*ppclst, dataid);
         return SPT_NOMEM;
     }
@@ -1159,6 +1177,7 @@ int do_insert_up_via_d(cluster_head_t **ppclst, insert_info_t *pinsert, char *ne
         {
             /*yzx释放资源， 申请新块，拆分*/
             atomic64_add(1,(atomic64_t *)&g_dbg_info.oom_no_vec);
+            printf("\r\n%d\t%s", __LINE__, __FUNCTION__);
             db_free(*ppclst, dataid);
             vec_free(*ppclst, vecid_a);
             return SPT_NOMEM;
@@ -3503,6 +3522,7 @@ spt_thrd_t *spt_thread_init(int thread_num)
     g_thrd_h->free_q_bidx = 0;
     g_thrd_h->thrd_idx = 0;
     g_thrd_h->thrd_total= thread_num;
+    g_thrd_h->token = SPT_THRD_TOKEN;
     return g_thrd_h;
 }
 
@@ -3513,7 +3533,7 @@ void spt_thread_start()
 
 void spt_thread_exit(int thread)
 {
-    u32 thrd_idx, freeid, type;
+    u32 thrd_idx, freeid, type,token;
     u64 safe_idx, begin_idx, idx, cmd;
 
     safe_idx = g_thrd_h->free_q_idx;
@@ -3523,7 +3543,22 @@ void spt_thread_exit(int thread)
     {
         return;
     }
-    begin_idx = atomic64_xchg((atomic64_t *)&g_thrd_h->free_q_bidx, safe_idx);
+    atomic64_add(1,(atomic64_t *)&g_dbg_info.thread_exit);
+    token = atomic_xchg((atomic_t *)&g_thrd_h->token, 0);
+    if(token != SPT_THRD_TOKEN)
+    {
+        return;
+    }
+    atomic64_add(1,(atomic64_t *)&g_dbg_info.thread_get_token);
+    do
+    {
+        begin_idx = atomic64_read((atomic64_t *)&g_thrd_h->free_q_bidx);
+        if(begin_idx >= safe_idx)
+        {
+            return;
+        }
+    }while(begin_idx != atomic64_cmpxchg((atomic64_t *)&g_thrd_h->free_q_bidx, begin_idx, safe_idx));
+//    begin_idx = atomic64_xchg((atomic64_t *)&g_thrd_h->free_q_bidx, safe_idx);
     for(idx=begin_idx; idx<safe_idx; idx++)
     {
         cmd = lfo_deq(g_thrd_h->pfree_q, thread, idx);
@@ -3540,6 +3575,7 @@ void spt_thread_exit(int thread)
             db_free(pgclst, freeid);
         }
     }
+    atomic_xchg((atomic_t *)&g_thrd_h->token, SPT_THRD_TOKEN);
     return;
 }
 
@@ -4294,7 +4330,7 @@ query_info_t g_qinfo = {0};
 void *spt_thread(void *arg)
 {
     cpu_set_t mask;
-    int i,j, ret;
+    int i,j, ret, flag;
 //    u64 order_id;
     spt_vec *pvec;
     //spt_vec *pvec, *pid_2_ptr;
@@ -4302,6 +4338,7 @@ void *spt_thread(void *arg)
     
 //    u64 start, end;
     i = (long)arg;
+    flag = 0;
 
     g_thrd_id = i;
     CPU_ZERO(&mask); 
@@ -4387,6 +4424,11 @@ void *spt_thread(void *arg)
             else
             {
                 atomic64_add(1,(atomic64_t *)&g_dbg_info.insert_fail);
+                if(ret == SPT_NOMEM)
+                {
+                    flag = 1;
+                    break;
+                }
             }
         }
         #if 1
@@ -4404,6 +4446,11 @@ void *spt_thread(void *arg)
         }
         #endif
         spt_thread_exit(g_thrd_id);
+        if(flag == 1)
+        {
+            sleep(1);
+            flag = 0;
+        }
     }
 //    spt_thread_exit(g_thrd_id);
     spt_debug("test%d done\r\n", g_thrd_id);

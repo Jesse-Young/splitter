@@ -40,6 +40,7 @@
 #define SPT_PTR_DATA (1ul)
 
 
+#define SPT_THRD_TOKEN 1
 typedef struct 
 {
     orderq_h_t *pfree_q;
@@ -47,6 +48,7 @@ typedef struct
     volatile u64 free_q_bidx;
     volatile u32 thrd_total;
     volatile u32 thrd_idx;
+    volatile u32 token;
 }spt_thrd_t;
 
 typedef struct chunk_head
@@ -280,7 +282,9 @@ typedef struct spt_dbg_info_st
     u64 insert_fail;
     u64 delete_ok;
     u64 delete_fail;
-    
+
+    u64 thread_exit;
+    u64 thread_get_token;
 }spt_dbg_info;
 
 //#define DBLK_BITS 3
