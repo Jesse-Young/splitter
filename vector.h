@@ -8,6 +8,7 @@
 #define SPT_VEC_FLAG_RIGHT 0
 #define SPT_VEC_FLAG_DATA 1
 #define SPT_VEC_FlAG_SIGNPOST 2
+#define SPT_VEC_FLAG_RAW 3
 #define SPT_VEC_SYS_FLAG_DATA 1
 
 
@@ -39,17 +40,46 @@
 #define SPT_PTR_VEC (0ul)
 #define SPT_PTR_DATA (1ul)
 
+#define SPT_BWMAP_ALL_ONLINE 0xfffffffffffffffful
+#define SPT_BUF_TICK_BITS 18
+#define SPT_BUF_TICK_MASK ((1<<SPT_BUF_TICK_BITS)-1)
 
-#define SPT_THRD_TOKEN 1
+#define SPT_PER_THRD_RSV_CNT 2
+#define SPT_BUF_VEC_WATERMARK 200
+#define SPT_BUF_DATA_WATERMARK 100
+
+typedef struct
+{
+//    unsigned long long flag:1;
+    unsigned long long tick:18;
+    unsigned long long id:23;
+    unsigned long long next:23;
+}spt_buf_list;
+
+typedef struct
+{
+    unsigned int thrd_id;
+    unsigned int vec_cnt;
+    unsigned int vec_list_cnt;
+    unsigned int data_cnt;
+    unsigned int data_list_cnt;
+    unsigned int vec_free_in;
+    unsigned int vec_alloc_out;
+    unsigned int data_free_in;
+    unsigned int data_alloc_out;
+    unsigned int rsv_cnt;
+    unsigned int rsv_list;
+}spt_thrd_data;
+
 typedef struct 
 {
-    orderq_h_t *pfree_q;
-    volatile u64 free_q_idx;
-    volatile u64 free_q_bidx;
-    volatile u32 thrd_total;
-    volatile u32 thrd_idx;
-    volatile u32 token;
+    u32 thrd_total;
+    volatile unsigned int tick;
+    volatile unsigned long long black_white_map;
+    volatile unsigned long long online_map;
+    spt_thrd_data thrd_data[0];
 }spt_thrd_t;
+
 
 typedef struct chunk_head
 {
@@ -297,7 +327,7 @@ typedef struct spt_dbg_info_st
 
 //#define vec_id_2_ptr(pchk, id)    ((char *)pchk+id*VBLK_SIZE);
 
-unsigned int vec_alloc(cluster_head_t **ppcluster, spt_vec **vec);
+unsigned int vec_alloc(cluster_head_t *pclst, spt_vec **vec);
 void vec_free(cluster_head_t *pcluster, int id);
 void vec_list_free(cluster_head_t *pcluster, int id);
 void db_free(cluster_head_t *pcluster, int id);
