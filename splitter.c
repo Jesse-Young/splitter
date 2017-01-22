@@ -571,6 +571,7 @@ int do_insert_dsignpost_right(cluster_head_t *pclst, insert_info_t *pinsert, cha
 {
     spt_vec tmp_vec, *pvec_a;  
     u32 dataid, vecid_a;
+    int ret;
     char *pdata;
     spt_dh *pdh;
 
@@ -612,9 +613,12 @@ int do_insert_dsignpost_right(cluster_head_t *pclst, insert_info_t *pinsert, cha
     }
     else
     {
-        db_free_to_buf(pclst, dataid, g_thrd_id);
-        vec_free_to_buf(pclst, vecid_a);
-        return SPT_DO_AGAIN;
+        db_free_to_buf_simple(pclst, dataid, g_thrd_id);
+        vec_free_to_buf_simple(pclst, vecid_a, g_thrd_id);
+        ret = fill_in_rsv_list(pclst, 2, g_thrd_id);
+        if(ret == SPT_OK)
+            return SPT_DO_AGAIN;
+        return ret;
     }
 
 }
@@ -625,9 +629,10 @@ int do_insert_rsignpost_down(cluster_head_t *pclst, insert_info_t *pinsert, char
     spt_vec tmp_vec, *pvec_a, *pvec_b, *pvec_s;
     //char *pcur_data;//*ppre_data,
     u64 signpost;
-    u32 dataid, vecid_a, vecid_b, vecid_s;
+    u32 dataid, vecid_a, vecid_b, vecid_s, cnt;
     char *pdata;
     spt_dh *pdh;
+    int ret;
 
     pvec_s = 0;
     dataid = data_alloc_combo(pclst, g_thrd_id, &pdata);
@@ -677,7 +682,7 @@ int do_insert_rsignpost_down(cluster_head_t *pclst, insert_info_t *pinsert, char
         atomic64_add(1,(atomic64_t *)&g_dbg_info.oom_no_vec);
         printf("\r\n%d\t%s", __LINE__, __FUNCTION__);
         db_free_to_buf(pclst, dataid, g_thrd_id);
-        vec_free_to_buf (pclst, vecid_a);
+        vec_free_to_buf (pclst, vecid_a, g_thrd_id);
         return SPT_NOMEM;
     }
     pvec_b->val = 0;
@@ -695,8 +700,8 @@ int do_insert_rsignpost_down(cluster_head_t *pclst, insert_info_t *pinsert, char
             atomic64_add(1,(atomic64_t *)&g_dbg_info.oom_no_db);
             printf("\r\n%d\t%s", __LINE__, __FUNCTION__);
             db_free_to_buf(pclst, dataid, g_thrd_id);
-            vec_free_to_buf(pclst, vecid_a);
-            vec_free_to_buf(pclst, vecid_b);
+            vec_free_to_buf(pclst, vecid_a, g_thrd_id);
+            vec_free_to_buf(pclst, vecid_b, g_thrd_id);
             return SPT_NOMEM;
         }
         pvec_s->val = 0;        
@@ -717,14 +722,19 @@ int do_insert_rsignpost_down(cluster_head_t *pclst, insert_info_t *pinsert, char
     }
     else
     {
-        db_free_to_buf(pclst, dataid, g_thrd_id);
-        vec_free_to_buf(pclst, vecid_a);
-        vec_free_to_buf(pclst, vecid_b);
+        db_free_to_buf_simple(pclst, dataid, g_thrd_id);
+        vec_free_to_buf_simple(pclst, vecid_a, g_thrd_id);
+        vec_free_to_buf_simple(pclst, vecid_b, g_thrd_id);
+        cnt = 3;
         if(pvec_s != 0)
         {
-            vec_free_to_buf(pclst, vecid_s);
-        }        
-        return SPT_DO_AGAIN;
+            vec_free_to_buf_simple(pclst, vecid_s, g_thrd_id);
+            cnt = 4;
+        }
+        ret = fill_in_rsv_list(pclst, cnt, g_thrd_id);
+        if(ret == SPT_OK)
+            return SPT_DO_AGAIN;
+        return ret;
     }
 }
 
@@ -732,8 +742,9 @@ int do_insert_first_set(cluster_head_t *pclst, insert_info_t *pinsert, char *new
 {
     u32 dataid;
     char *pdata;
-    spt_vec tmp_vec, cur_vec, *pcur;
+    spt_vec tmp_vec, *pcur;
     spt_dh *pdh;
+    int ret;
 
     dataid = data_alloc_combo(pclst, g_thrd_id, &pdata);
     if(pdata == 0)
@@ -762,8 +773,11 @@ int do_insert_first_set(cluster_head_t *pclst, insert_info_t *pinsert, char *new
     }
     else
     {
-        db_free_to_buf(pclst, dataid, g_thrd_id);      
-        return SPT_DO_AGAIN;
+        db_free_to_buf_simple(pclst, dataid, g_thrd_id);      
+        ret = fill_in_rsv_list(pclst, 1, g_thrd_id);
+        if(ret == SPT_OK)
+            return SPT_DO_AGAIN;
+        return ret;
     }
 
 }
@@ -773,9 +787,10 @@ int do_insert_up_via_r(cluster_head_t *pclst, insert_info_t *pinsert, char *new_
     spt_vec tmp_vec, *pvec_a, *pvec_b, *pvec_s, *pvec_s2;
     //char *pcur_data;//*ppre_data,
     u64 signpost;
-    u32 dataid, vecid_a, vecid_b, vecid_s, vecid_s2, tmp_rd;
+    u32 dataid, vecid_a, vecid_b, vecid_s, vecid_s2, tmp_rd, cnt;
     char *pdata;
     spt_dh *pdh;
+    int ret;
 
     pvec_b = 0;
     pvec_s = 0;
@@ -820,7 +835,7 @@ int do_insert_up_via_r(cluster_head_t *pclst, insert_info_t *pinsert, char *new_
             atomic64_add(1,(atomic64_t *)&g_dbg_info.oom_no_vec);
             printf("\r\n%d\t%s", __LINE__, __FUNCTION__);
             db_free_to_buf(pclst, dataid, g_thrd_id);
-            vec_free_to_buf(pclst, vecid_a);
+            vec_free_to_buf(pclst, vecid_a, g_thrd_id);
             return SPT_NOMEM;
         }
         pvec_s->val = 0;
@@ -854,10 +869,10 @@ int do_insert_up_via_r(cluster_head_t *pclst, insert_info_t *pinsert, char *new_
             atomic64_add(1,(atomic64_t *)&g_dbg_info.oom_no_vec);
             printf("\r\n%d\t%s", __LINE__, __FUNCTION__);
             db_free_to_buf(pclst, dataid, g_thrd_id);
-            vec_free_to_buf(pclst, vecid_a);
+            vec_free_to_buf(pclst, vecid_a, g_thrd_id);
             if(pvec_s != 0)
             {
-                vec_free_to_buf(pclst, vecid_s);
+                vec_free_to_buf(pclst, vecid_s, g_thrd_id);
             }
             return SPT_NOMEM;
         }
@@ -875,11 +890,11 @@ int do_insert_up_via_r(cluster_head_t *pclst, insert_info_t *pinsert, char *new_
                 /*yzx释放资源， 申请新块，拆分*/
                 atomic64_add(1,(atomic64_t *)&g_dbg_info.oom_no_vec);
                 db_free_to_buf(pclst, dataid, g_thrd_id);
-                vec_free_to_buf(pclst, vecid_a);
-                vec_free_to_buf(pclst, vecid_b);
+                vec_free_to_buf(pclst, vecid_a, g_thrd_id);
+                vec_free_to_buf(pclst, vecid_b, g_thrd_id);
                 if(pvec_s != 0)
                 {
-                    vec_free_to_buf(pclst, vecid_s);
+                    vec_free_to_buf(pclst, vecid_s, g_thrd_id);
                 }
                 printf("\r\n%d\t%s", __LINE__, __FUNCTION__);
                 return SPT_NOMEM;
@@ -911,22 +926,29 @@ int do_insert_up_via_r(cluster_head_t *pclst, insert_info_t *pinsert, char *new_
     }
     else
     {
-        db_free_to_buf(pclst, dataid, g_thrd_id);
-        vec_free_to_buf(pclst, vecid_a);
+        db_free_to_buf_simple(pclst, dataid, g_thrd_id);
+        vec_free_to_buf_simple(pclst, vecid_a, g_thrd_id);
+        cnt = 2;
         if(pvec_b != 0)
         {
-            vec_free_to_buf(pclst, vecid_b);
+            vec_free_to_buf_simple(pclst, vecid_b, g_thrd_id);
+            cnt++;
         }
         //vec_free_to_buf(*ppclst, vecid_b);
         if(pvec_s != 0)
         {
-            vec_free_to_buf(pclst, vecid_s);
+            vec_free_to_buf_simple(pclst, vecid_s, g_thrd_id);
+            cnt++;
         }
         if(pvec_s2 != 0)
         {
-            vec_free_to_buf(pclst, vecid_s2);
+            vec_free_to_buf_simple(pclst, vecid_s2, g_thrd_id);
+            cnt++;
         }        
-        return SPT_DO_AGAIN;
+        ret = fill_in_rsv_list(pclst, cnt, g_thrd_id);
+        if(ret == SPT_OK)
+            return SPT_DO_AGAIN;
+        return ret;
     }
 }
 
@@ -936,9 +958,10 @@ int do_insert_down_via_r(cluster_head_t *pclst, insert_info_t *pinsert, char *ne
     spt_vec tmp_vec, *pvec_a, *pvec_b, *pvec_s;
     //char *pcur_data;//*ppre_data,
     u64 signpost;
-    u32 dataid, vecid_a, vecid_b, vecid_s;
+    u32 dataid, vecid_a, vecid_b, vecid_s,cnt;
     char *pdata;
     spt_dh *pdh;
+    int ret;
 
     pvec_s = 0;
     dataid = data_alloc_combo(pclst, g_thrd_id, &pdata);
@@ -980,7 +1003,7 @@ int do_insert_down_via_r(cluster_head_t *pclst, insert_info_t *pinsert, char *ne
         atomic64_add(1,(atomic64_t *)&g_dbg_info.oom_no_vec);
         printf("\r\n%d\t%s", __LINE__, __FUNCTION__);
         db_free_to_buf(pclst, dataid, g_thrd_id);
-        vec_free_to_buf(pclst, vecid_b);
+        vec_free_to_buf(pclst, vecid_b, g_thrd_id);
         return SPT_NOMEM;
     }
     pvec_a->val = 0;
@@ -1023,8 +1046,8 @@ int do_insert_down_via_r(cluster_head_t *pclst, insert_info_t *pinsert, char *ne
             atomic64_add(1,(atomic64_t *)&g_dbg_info.oom_no_vec);
             printf("\r\n%d\t%s", __LINE__, __FUNCTION__);
             db_free_to_buf(pclst, dataid, g_thrd_id);
-            vec_free_to_buf(pclst, vecid_a);
-            vec_free_to_buf(pclst, vecid_b);
+            vec_free_to_buf(pclst, vecid_a, g_thrd_id);
+            vec_free_to_buf(pclst, vecid_b, g_thrd_id);
             return SPT_NOMEM;
         }
         pvec_s->val = 0;
@@ -1045,8 +1068,8 @@ int do_insert_down_via_r(cluster_head_t *pclst, insert_info_t *pinsert, char *ne
             atomic64_add(1,(atomic64_t *)&g_dbg_info.oom_no_vec);
             printf("\r\n%d\t%s", __LINE__, __FUNCTION__);
             db_free_to_buf(pclst, dataid, g_thrd_id);
-            vec_free_to_buf(pclst, vecid_a);
-            vec_free_to_buf(pclst, vecid_b);
+            vec_free_to_buf(pclst, vecid_a, g_thrd_id);
+            vec_free_to_buf(pclst, vecid_b, g_thrd_id);
             return SPT_NOMEM;
         }
         pvec_s->val = 0;        
@@ -1072,14 +1095,19 @@ int do_insert_down_via_r(cluster_head_t *pclst, insert_info_t *pinsert, char *ne
     }
     else
     {
-        db_free_to_buf(pclst, dataid, g_thrd_id);
-        vec_free_to_buf(pclst, vecid_a);
-        vec_free_to_buf(pclst, vecid_b);
+        db_free_to_buf_simple(pclst, dataid, g_thrd_id);
+        vec_free_to_buf_simple(pclst, vecid_a, g_thrd_id);
+        vec_free_to_buf_simple(pclst, vecid_b, g_thrd_id);
+        cnt = 3;
         if(pvec_s != 0)
         {
-            vec_free_to_buf(pclst, vecid_s);
+            vec_free_to_buf_simple(pclst, vecid_s, g_thrd_id);
+            cnt ++;
         }
-        return SPT_DO_AGAIN;
+        ret = fill_in_rsv_list(pclst, cnt, g_thrd_id);
+        if(ret == SPT_OK)
+            return SPT_DO_AGAIN;
+        return ret;
     }
 }
 /*cur->down == null, 首位为0 ，直接插到cur->down上*/
@@ -1089,9 +1117,10 @@ int do_insert_last_down(cluster_head_t *pclst, insert_info_t *pinsert, char *new
     spt_vec tmp_vec, *pvec_a, *pvec_s;
     //char *pcur_data;//*ppre_data,
     u64 signpost;
-    u32 dataid, vecid_a, vecid_s;
+    u32 dataid, vecid_a, vecid_s, cnt;
     char *pdata;
     spt_dh *pdh;
+    int ret;
 
     pvec_s = 0;
     dataid = data_alloc_combo(pclst, g_thrd_id, &pdata);
@@ -1135,7 +1164,7 @@ int do_insert_last_down(cluster_head_t *pclst, insert_info_t *pinsert, char *new
             atomic64_add(1,(atomic64_t *)&g_dbg_info.oom_no_vec);
             printf("\r\n%d\t%s", __LINE__, __FUNCTION__);
             db_free_to_buf(pclst, dataid, g_thrd_id);
-            vec_free_to_buf(pclst, vecid_a);
+            vec_free_to_buf(pclst, vecid_a, g_thrd_id);
             return SPT_NOMEM;
         }
         pvec_s->val = 0;        
@@ -1156,13 +1185,18 @@ int do_insert_last_down(cluster_head_t *pclst, insert_info_t *pinsert, char *new
     }
     else
     {
-        db_free_to_buf(pclst, dataid);
-        vec_free_to_buf(pclst, vecid_a);
+        db_free_to_buf_simple(pclst, dataid, g_thrd_id);
+        vec_free_to_buf_simple(pclst, vecid_a, g_thrd_id);
+        cnt = 2;
         if(pvec_s != 0)
         {
-            vec_free_to_buf(pclst, vecid_s);
+            vec_free_to_buf_simple(pclst, vecid_s, g_thrd_id);
+            cnt++;
         }
-        return SPT_DO_AGAIN;
+        ret = fill_in_rsv_list(pclst, cnt, g_thrd_id);
+        if(ret == SPT_OK)
+            return SPT_DO_AGAIN;
+        return ret;
     }
 }
 
@@ -1171,9 +1205,10 @@ int do_insert_up_via_d(cluster_head_t *pclst, insert_info_t *pinsert, char *new_
     spt_vec tmp_vec, *pvec_a, *pvec_s;
     //char *pcur_data;//*ppre_data,
     u64 signpost;
-    u32 dataid, vecid_a, vecid_s;
+    u32 dataid, vecid_a, vecid_s, cnt;
     char *pdata;
     spt_dh *pdh;
+    int ret;
 
     pvec_s = 0;
     dataid = data_alloc_combo(pclst, g_thrd_id, &pdata);
@@ -1199,7 +1234,7 @@ int do_insert_up_via_d(cluster_head_t *pclst, insert_info_t *pinsert, char *new_
         /*yzx释放资源， 申请新块，拆分*/
         atomic64_add(1,(atomic64_t *)&g_dbg_info.oom_no_vec);
         printf("\r\n%d\t%s", __LINE__, __FUNCTION__);
-        db_free_to_buf(pclst, dataid);
+        db_free_to_buf(pclst, dataid, g_thrd_id);
         return SPT_NOMEM;
     }
     pvec_a->val = 0;
@@ -1215,8 +1250,8 @@ int do_insert_up_via_d(cluster_head_t *pclst, insert_info_t *pinsert, char *new_
             /*yzx释放资源， 申请新块，拆分*/
             atomic64_add(1,(atomic64_t *)&g_dbg_info.oom_no_vec);
             printf("\r\n%d\t%s", __LINE__, __FUNCTION__);
-            db_free_to_buf(pclst, dataid);
-            vec_free_to_buf(pclst, vecid_a);
+            db_free_to_buf(pclst, dataid, g_thrd_id);
+            vec_free_to_buf(pclst, vecid_a, g_thrd_id);
             return SPT_NOMEM;
         }
         pvec_s->val = 0;        
@@ -1255,13 +1290,18 @@ int do_insert_up_via_d(cluster_head_t *pclst, insert_info_t *pinsert, char *new_
     }
     else
     {
-        db_free_to_buf(pclst, dataid);
-        vec_free_to_buf(pclst, vecid_a);
+        db_free_to_buf_simple(pclst, dataid, g_thrd_id);
+        vec_free_to_buf_simple(pclst, vecid_a, g_thrd_id);
+        cnt = 2;
         if(pvec_s != 0)
         {
-            vec_free_to_buf(pclst, vecid_s);
+            vec_free_to_buf_simple(pclst, vecid_s, g_thrd_id);
+            cnt ++;
         }
-        return SPT_DO_AGAIN;
+        ret = fill_in_rsv_list(pclst, cnt, g_thrd_id);
+        if(ret == SPT_OK)
+            return SPT_DO_AGAIN;
+        return ret;
     }
 
 }
@@ -3650,9 +3690,15 @@ spt_thrd_t *spt_thread_init(int thread_num)
     {
         g_thrd_h->thrd_data[i].thrd_id = i;
         g_thrd_h->thrd_data[i].vec_cnt = 0;
-        g_thrd_h->thrd_data[i].db_cnt = 0;
-        g_thrd_h->thrd_data[i].free_in = SPT_NULL;
-        g_thrd_h->thrd_data[i].alloc_out = SPT_NULL;
+        g_thrd_h->thrd_data[i].vec_list_cnt = 0;
+        g_thrd_h->thrd_data[i].data_cnt = 0;
+        g_thrd_h->thrd_data[i].data_list_cnt = 0;
+        g_thrd_h->thrd_data[i].vec_free_in = SPT_NULL;
+        g_thrd_h->thrd_data[i].vec_alloc_out = SPT_NULL;
+        g_thrd_h->thrd_data[i].data_free_in = SPT_NULL;
+        g_thrd_h->thrd_data[i].data_alloc_out = SPT_NULL;
+        g_thrd_h->thrd_data[i].rsv_cnt = 0;
+        fill_in_rsv_list_simple(pgclst, SPT_PER_THRD_RSV_CNT, i);
     }
     
     return g_thrd_h;
@@ -3706,7 +3752,7 @@ int spt_thread_start(int thread)
 
 void spt_thread_exit(int thread)
 {
-    u64 olmap, bwmap, old_val, new_val;
+    u64 olmap, bwmap, new_val;
 
     smp_mb();
     olmap = spt_atomic64_clear_bit_return(thread,(atomic64_t *)&g_thrd_h->online_map);
@@ -4483,7 +4529,7 @@ void *spt_thread(void *arg)
     cpu_set_t mask;
     int i,j, ret, flag;
 //    u64 order_id;
-    spt_vec *pvec;
+//    spt_vec *pvec;
     //spt_vec *pvec, *pid_2_ptr;
     //spt_dh *pdb, *pdbid_2_ptr;
     
@@ -4578,11 +4624,6 @@ void *spt_thread(void *arg)
             else
             {
                 atomic64_add(1,(atomic64_t *)&g_dbg_info.insert_fail);
-                if(ret == SPT_NOMEM)
-                {
-                    flag = 1;
-                    break;
-                }
             }
         }
         #if 1
@@ -4600,11 +4641,6 @@ void *spt_thread(void *arg)
         }
         #endif
         spt_thread_exit(g_thrd_id);
-        if(flag == 1)
-        {
-            sleep(1);
-            flag = 0;
-        }
     }
 //    spt_thread_exit(g_thrd_id);
     spt_debug("test%d done\r\n", g_thrd_id);
@@ -4624,7 +4660,7 @@ int main()
     cpu_set_t mask;
 
     CPU_ZERO(&mask); 
-    thread_num = 4;
+    thread_num = 1;
 
     pgclst = cluster_init(thread_num);
     if(pgclst == NULL)

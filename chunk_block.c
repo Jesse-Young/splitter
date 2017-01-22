@@ -14,6 +14,10 @@
 #include <chunk.h>
 #include <lf_order.h>
 
+void vec_buf_free(cluster_head_t *pclst, int thread_id);
+void data_buf_free(cluster_head_t *pclst, int thread_id);
+int fill_in_rsv_list_simple(cluster_head_t *pclst, int nr, int thread_id);
+
 #if 1 //for test
 char* blk_id_2_ptr(cluster_head_t *pclst, unsigned int id)
 {
@@ -556,15 +560,15 @@ unsigned int data_alloc_from_buf(cluster_head_t *pclst, int thread_id, char **db
         return -1;
     }
     ret_id = pnode->id;
-    *db = (spt_vec *)db_id_2_ptr(pclst,ret_id);
+    *db = db_id_2_ptr(pclst,ret_id);
     pnode->id = SPT_NULL;
-    if(pthrd_data->vec_alloc_out == pthrd_data->vec_free_in)
+    if(pthrd_data->data_alloc_out == pthrd_data->data_free_in)
     {
-        pthrd_data->vec_alloc_out = pthrd_data->vec_free_in = SPT_NULL;
+        pthrd_data->data_alloc_out = pthrd_data->data_free_in = SPT_NULL;
     }
     else
     {
-        pthrd_data->vec_alloc_out = pnode->next;
+        pthrd_data->data_alloc_out = pnode->next;
     }
     pthrd_data->data_cnt--;
     pthrd_data->data_list_cnt--;
@@ -685,15 +689,39 @@ unsigned int vec_alloc_from_rsvlist(cluster_head_t *pclst, int thread_id, spt_ve
 
     pthrd_data->rsv_list = pvec->next;
     pthrd_data->rsv_cnt--;
-    *vec = pvec;
+    *vec = (spt_vec *)pvec;
     return vec_id;
 }
 
 int fill_in_rsv_list(cluster_head_t *pclst, int nr, int thread_id)
 {
     spt_thrd_data *pthrd_data = &g_thrd_h->thrd_data[thread_id];
+
+    if(pthrd_data->vec_list_cnt > SPT_BUF_VEC_WATERMARK)
+    {
+        vec_buf_free(pclst, thread_id);
+    }
+    if(pthrd_data->data_list_cnt > SPT_BUF_DATA_WATERMARK)
+    {
+        data_buf_free(pclst, thread_id);
+    }    
+    if(atomic_read((atomic_t *)&pthrd_data->vec_list_cnt) > SPT_BUF_VEC_WATERMARK
+        || (atomic_read((atomic_t *)&pthrd_data->data_list_cnt) > SPT_BUF_DATA_WATERMARK))
+    {
+        fill_in_rsv_list_simple(pclst, 1, thread_id);
+        return SPT_WAIT_AMT;
+    }
+    else
+    {
+        return fill_in_rsv_list_simple(pclst, 1, thread_id);
+    }
+}
+
+
+int fill_in_rsv_list_simple(cluster_head_t *pclst, int nr, int thread_id)
+{
+    spt_thrd_data *pthrd_data = &g_thrd_h->thrd_data[thread_id];
     u32 vec_id;
-    u32 tick;
     vec_head_t *pvec;
 
     while(nr>0)
@@ -749,7 +777,7 @@ void vec_buf_free(cluster_head_t *pclst, int thread_id)
 int vec_free_to_buf(cluster_head_t *pclst, int id, int thread_id)
 {
     spt_thrd_data *pthrd_data = &g_thrd_h->thrd_data[thread_id];
-    u32 list_vec_id, ret;
+    u32 list_vec_id;
     u32 tick;
     spt_buf_list *pnode;
     spt_vec *pvec;
@@ -774,16 +802,19 @@ int vec_free_to_buf(cluster_head_t *pclst, int id, int thread_id)
     pthrd_data->vec_list_cnt++;
     pthrd_data->vec_cnt += 2;
 
-    ret = fill_in_rsv_list(pclst, 1, thread_id);
-    if(ret != SPT_OK)
-        return ret;
     if(pthrd_data->vec_list_cnt > SPT_BUF_VEC_WATERMARK)
     {
         vec_buf_free(pclst, thread_id);
     }
-    if(pthrd_data->vec_list_cnt > SPT_BUF_VEC_WATERMARK)
+    if(atomic_read((atomic_t *)&pthrd_data->vec_list_cnt) > SPT_BUF_VEC_WATERMARK)
+    {
+        fill_in_rsv_list_simple(pclst, 1, thread_id);
         return SPT_WAIT_AMT;
-    return SPT_OK;
+    }
+    else
+    {
+        return fill_in_rsv_list_simple(pclst, 1, thread_id);
+    }
 }
 
 void data_buf_free(cluster_head_t *pclst, int thread_id)
@@ -819,11 +850,41 @@ void data_buf_free(cluster_head_t *pclst, int thread_id)
     return;
 }
 
-
-int db_free_to_buf(cluster_head_t *pclst, int id, int thread_id)
+void vec_free_to_buf_simple(cluster_head_t *pclst, int id, int thread_id)
 {
     spt_thrd_data *pthrd_data = &g_thrd_h->thrd_data[thread_id];
-    u32 list_vec_id, ret;
+    u32 list_vec_id;
+    u32 tick;
+    spt_buf_list *pnode;
+    spt_vec *pvec;
+
+    pvec = (spt_vec *)vec_id_2_ptr(pclst, id);
+    pvec->flag = SPT_VEC_FLAG_RAW;
+    list_vec_id = vec_alloc_from_rsvlist(pclst, thread_id, (spt_vec **)&pnode);
+    tick = atomic_add_return(0, (atomic_t *)&g_thrd_h->tick) & SPT_BUF_TICK_MASK;
+    pnode->tick = tick;
+    pnode->id = id;
+    pnode->next = SPT_NULL;
+    if(pthrd_data->vec_free_in == SPT_NULL)
+    {
+        pthrd_data->vec_free_in = pthrd_data->vec_alloc_out = list_vec_id;
+    }
+    else
+    {
+        pnode = (spt_buf_list *)vec_id_2_ptr(pclst, pthrd_data->vec_free_in);
+        pnode->next = list_vec_id;
+        pthrd_data->vec_free_in = list_vec_id;
+    }
+    pthrd_data->vec_list_cnt++;
+    pthrd_data->vec_cnt += 2;
+    return;
+}
+
+
+void db_free_to_buf_simple(cluster_head_t *pclst, int id, int thread_id)
+{
+    spt_thrd_data *pthrd_data = &g_thrd_h->thrd_data[thread_id];
+    u32 list_vec_id;
     u32 tick;
     spt_buf_list *pnode;
 
@@ -838,23 +899,55 @@ int db_free_to_buf(cluster_head_t *pclst, int id, int thread_id)
     }
     else
     {
-        pnode = (spt_buf_list *)vec_id_2_ptr(pclst, pthrd_data->vec_free_in);
+        pnode = (spt_buf_list *)vec_id_2_ptr(pclst, pthrd_data->data_free_in);
         pnode->next = list_vec_id;
         pthrd_data->data_free_in = list_vec_id;
     }
     pthrd_data->data_list_cnt++;
     pthrd_data->data_cnt ++;
 
-    ret = fill_in_rsv_list(pclst, 1, thread_id);
-    if(ret != SPT_OK)
-        return ret;
+    return;
+}
+
+
+int db_free_to_buf(cluster_head_t *pclst, int id, int thread_id)
+{
+    spt_thrd_data *pthrd_data = &g_thrd_h->thrd_data[thread_id];
+    u32 list_vec_id;
+    u32 tick;
+    spt_buf_list *pnode;
+
+    list_vec_id = vec_alloc_from_rsvlist(pclst, thread_id, (spt_vec **)&pnode);
+    tick = atomic_add_return(0, (atomic_t *)&g_thrd_h->tick) & SPT_BUF_TICK_MASK;
+    pnode->tick = tick;
+    pnode->id = id;
+    pnode->next = SPT_NULL;
+    if(pthrd_data->data_free_in == SPT_NULL)
+    {
+        pthrd_data->data_free_in = pthrd_data->data_alloc_out = list_vec_id;
+    }
+    else
+    {
+        pnode = (spt_buf_list *)vec_id_2_ptr(pclst, pthrd_data->data_free_in);
+        pnode->next = list_vec_id;
+        pthrd_data->data_free_in = list_vec_id;
+    }
+    pthrd_data->data_list_cnt++;
+    pthrd_data->data_cnt ++;
+
     if(pthrd_data->data_list_cnt > SPT_BUF_DATA_WATERMARK)
     {
         data_buf_free(pclst, thread_id);
     }
-    if(pthrd_data->data_list_cnt > SPT_BUF_DATA_WATERMARK)
+    if(atomic_read((atomic_t *)&pthrd_data->data_list_cnt) > SPT_BUF_DATA_WATERMARK)
+    {
+        fill_in_rsv_list_simple(pclst, 1, thread_id);
         return SPT_WAIT_AMT;
-    return SPT_OK;
+    }
+    else
+    {
+        return fill_in_rsv_list_simple(pclst, 1, thread_id);
+    }
 }
 
 unsigned int vec_alloc_combo(cluster_head_t *pclst, int thread_id, spt_vec **vec)
