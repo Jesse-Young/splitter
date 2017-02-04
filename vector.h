@@ -313,6 +313,8 @@ typedef struct spt_dbg_info_st
     u64 delete_ok;
     u64 delete_fail;
 
+    u64 ret_wait;
+    u64 ret_nomem;
     u64 thread_exit;
     u64 thread_get_token;
 }spt_dbg_info;

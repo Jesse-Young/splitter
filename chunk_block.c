@@ -708,12 +708,12 @@ int fill_in_rsv_list(cluster_head_t *pclst, int nr, int thread_id)
     if(atomic_read((atomic_t *)&pthrd_data->vec_list_cnt) > SPT_BUF_VEC_WATERMARK
         || (atomic_read((atomic_t *)&pthrd_data->data_list_cnt) > SPT_BUF_DATA_WATERMARK))
     {
-        fill_in_rsv_list_simple(pclst, 1, thread_id);
+        fill_in_rsv_list_simple(pclst, nr, thread_id);
         return SPT_WAIT_AMT;
     }
     else
     {
-        return fill_in_rsv_list_simple(pclst, 1, thread_id);
+        return fill_in_rsv_list_simple(pclst, nr, thread_id);
     }
 }
 

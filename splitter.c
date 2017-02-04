@@ -28,7 +28,7 @@ cluster_head_t *pgclst;
 spt_thrd_t *g_thrd_h;
 
 
-spt_dbg_info g_dbg_info;
+spt_dbg_info g_dbg_info = {0};
 #define DBG_DATA_NUM 10
 u64 g_data[DBG_DATA_NUM]={0xee,0xbe,0xba,0xb6,0xae,
                           0xca,0x91,0x8a,0x36,0x06};
@@ -292,8 +292,7 @@ get_id_start:
                 next_vec.val = pnext->val;
                 if(next_vec.flag == SPT_VEC_FLAG_RAW)
                 {
-                    cur_vec.val = pcur->val;
-                    continue;
+                    goto get_id_start;
                 }
             }           
             if(next_vec.valid == SPT_VEC_INVALID)
@@ -447,8 +446,7 @@ get_id_start:
                 next_vec.val = pnext->val;
                 if(next_vec.flag == SPT_VEC_FLAG_RAW)
                 {
-                    cur_vec.val = pcur->val;
-                    continue;
+                    goto get_id_start;
                 }
             }
             if(next_vec.valid == SPT_VEC_INVALID)
@@ -1396,8 +1394,7 @@ refind_forward:
                     next_vec.val = pnext->val;
                     if(next_vec.flag == SPT_VEC_FLAG_RAW)
                     {
-                        cur_vec.val = pcur->val;
-                        continue;
+                        goto refind_start;
                     }
                 }
                 if(next_vec.valid == SPT_VEC_INVALID)
@@ -1508,8 +1505,7 @@ refind_forward:
                         next_vec.val = pnext->val;
                         if(next_vec.flag == SPT_VEC_FLAG_RAW)
                         {
-                            cur_vec.val = pcur->val;
-                            continue;
+                            goto refind_start;
                         }
                     }
                     if(next_vec.valid == SPT_VEC_INVALID)
@@ -1603,8 +1599,7 @@ refind_forward:
                         next_vec.val = pnext->val;
                         if(next_vec.flag == SPT_VEC_FLAG_RAW)
                         {
-                            cur_vec.val = pcur->val;
-                            continue;
+                            goto refind_start;
                         }
                     }
                     if(next_vec.valid == SPT_VEC_INVALID)
@@ -1846,8 +1841,7 @@ refind_forward:
                         next_vec.val = pnext->val;
                         if(next_vec.flag == SPT_VEC_FLAG_RAW)
                         {
-                            cur_vec.val = pcur->val;
-                            continue;
+                            goto refind_start;
                         }
                     }
                     if(next_vec.valid == SPT_VEC_INVALID)
@@ -1927,8 +1921,7 @@ refind_forward:
                             next_vec.val = pnext->val;
                             if(next_vec.flag == SPT_VEC_FLAG_RAW)
                             {
-                                cur_vec.val = pcur->val;
-                                continue;
+                                goto refind_start;
                             }
                         }
                         if(next_vec.valid == SPT_VEC_INVALID)
@@ -2032,8 +2025,7 @@ refind_forward:
                             next_vec.val = pnext->val;
                             if(next_vec.flag == SPT_VEC_FLAG_RAW)
                             {
-                                cur_vec.val = pcur->val;
-                                continue;
+                                goto refind_start;
                             }
                         }
                         if(next_vec.valid == SPT_VEC_INVALID)
@@ -3698,6 +3690,7 @@ spt_thrd_t *spt_thread_init(int thread_num)
         g_thrd_h->thrd_data[i].data_free_in = SPT_NULL;
         g_thrd_h->thrd_data[i].data_alloc_out = SPT_NULL;
         g_thrd_h->thrd_data[i].rsv_cnt = 0;
+        g_thrd_h->thrd_data[i].rsv_list = SPT_NULL;
         fill_in_rsv_list_simple(pgclst, SPT_PER_THRD_RSV_CNT, i);
     }
     
@@ -4527,7 +4520,7 @@ query_info_t g_qinfo = {0};
 void *spt_thread(void *arg)
 {
     cpu_set_t mask;
-    int i,j, ret, flag;
+    int i,j, ret;
 //    u64 order_id;
 //    spt_vec *pvec;
     //spt_vec *pvec, *pid_2_ptr;
@@ -4535,7 +4528,6 @@ void *spt_thread(void *arg)
     
 //    u64 start, end;
     i = (long)arg;
-    flag = 0;
 
     g_thrd_id = i;
     CPU_ZERO(&mask); 
@@ -4608,7 +4600,7 @@ void *spt_thread(void *arg)
     }
 #endif
 
-    for(i=0;i<1000000;i++)
+    for(i=0;i<100000;i++)
     {
         while(SPT_OK != spt_thread_start(g_thrd_id))
         {
@@ -4616,6 +4608,11 @@ void *spt_thread(void *arg)
         }
         for(j=0;j<DBG_DATA_NUM;j++)
         {
+            if(rsv_list_fill_cnt(pgclst, g_thrd_id) > 0)
+            {
+                spt_debug("@@@@@@@@@@@\r\n");
+                while(1);
+            }
             ret = insert_data(pgclst, (char *)&g_data[j]);
             if(ret == SPT_OK)
             {
@@ -4624,11 +4621,26 @@ void *spt_thread(void *arg)
             else
             {
                 atomic64_add(1,(atomic64_t *)&g_dbg_info.insert_fail);
+                if(ret == SPT_WAIT_AMT)
+                {
+                    atomic64_add(1,(atomic64_t *)&g_dbg_info.ret_wait);
+                    goto thread_exit;
+                }
+                if(ret == SPT_NOMEM)
+                {
+                    atomic64_add(1,(atomic64_t *)&g_dbg_info.ret_nomem);
+                    goto thread_exit;
+                }                
             }
         }
         #if 1
         for(j=0;j<DBG_DATA_NUM;j++)
         {
+            if(rsv_list_fill_cnt(pgclst, g_thrd_id) > 0)
+            {
+                spt_debug("@@@@@@@@@@@\r\n");
+                while(1);
+            }        
             ret = delete_data(pgclst, (char *)&g_data[j]);
             if(ret == SPT_OK)
             {
@@ -4637,9 +4649,20 @@ void *spt_thread(void *arg)
             else
             {
                 atomic64_add(1,(atomic64_t *)&g_dbg_info.delete_fail);
+                if(ret == SPT_WAIT_AMT)
+                {
+                    atomic64_add(1,(atomic64_t *)&g_dbg_info.ret_wait);
+                    goto thread_exit;
+                }
+                if(ret == SPT_NOMEM)
+                {
+                    atomic64_add(1,(atomic64_t *)&g_dbg_info.ret_nomem);
+                    goto thread_exit;
+                }                
             }
         }
         #endif
+thread_exit:
         spt_thread_exit(g_thrd_id);
     }
 //    spt_thread_exit(g_thrd_id);
@@ -4660,7 +4683,7 @@ int main()
     cpu_set_t mask;
 
     CPU_ZERO(&mask); 
-    thread_num = 1;
+    thread_num = 4;
 
     pgclst = cluster_init(thread_num);
     if(pgclst == NULL)
