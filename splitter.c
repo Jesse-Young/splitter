@@ -4600,7 +4600,7 @@ void *spt_thread(void *arg)
     }
 #endif
 
-    for(i=0;i<100000;i++)
+    for(i=0;i<1000000;i++)
     {
         while(SPT_OK != spt_thread_start(g_thrd_id))
         {

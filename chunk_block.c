@@ -763,12 +763,16 @@ void vec_buf_free(cluster_head_t *pclst, int thread_id)
             pthrd_data->vec_alloc_out = list_vec_id;
             return;
         }
-        vec_free(pclst, pnode->id);
+        if(pnode->id != SPT_NULL)
+        {
+            vec_free(pclst, pnode->id);
+            pthrd_data->vec_cnt--;
+        }
         tmp_id = list_vec_id;
         list_vec_id = pnode->next;
         vec_free(pclst, tmp_id);
         pthrd_data->vec_list_cnt--;
-        pthrd_data->vec_cnt -= 2;
+        pthrd_data->vec_cnt--;
     }
     pthrd_data->vec_alloc_out = list_vec_id;
     return;
