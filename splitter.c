@@ -32,7 +32,7 @@ spt_dbg_info g_dbg_info = {0};
 #define DBG_DATA_NUM 10
 u64 g_data[DBG_DATA_NUM]={0xee,0xbe,0xba,0xb6,0xae,
                           0xca,0x91,0x8a,0x36,0x06};
-
+int dbg_switch=0;
 
 u64 find_fs(char *a, u64 start, u64 len);
 int diff_identify(char *a, char *b,u64 start, u64 len, vec_cmpret_t *result);
@@ -848,18 +848,17 @@ int do_insert_up_via_r(cluster_head_t *pclst, insert_info_t *pinsert, char *new_
     else
     {
         tmp_vec.rd = vecid_a;
+        if(tmp_vec.pos == pvec_a->pos)
+        {
+            spt_debug("@@@@@ bug\r\n");
+            dbg_switch = 1;
+            debug_data_print(pinsert->pcur_data);
+            while(1);
+        }
     }
 
     if(tmp_vec.flag == SPT_VEC_FLAG_DATA || pinsert->endbit > pinsert->fs)
     {
-        if(tmp_vec.flag == SPT_VEC_FlAG_SIGNPOST)
-        {
-            assert(tmp_vec.ext_sys_flg != SPT_VEC_SYS_FLAG_DATA);
-        }
-        else
-        {
-            tmp_vec.flag = SPT_VEC_FLAG_RIGHT;
-        }    
         vecid_b = vec_alloc_combo(pclst, g_thrd_id, &pvec_b);
         if(pvec_b == 0)
         {
@@ -875,11 +874,18 @@ int do_insert_up_via_r(cluster_head_t *pclst, insert_info_t *pinsert, char *new_
             return SPT_NOMEM;
         }
         pvec_b->val = 0;
-        pvec_b->flag = SPT_VEC_FLAG_DATA;
+        pvec_b->flag = tmp_vec.flag;
         pvec_b->pos = (pinsert->fs-1)&SPT_VEC_SIGNPOST_MASK;
         pvec_b->rd = tmp_rd;
         pvec_b->down = SPT_NULL;
-    
+        if(tmp_vec.flag == SPT_VEC_FlAG_SIGNPOST)
+        {
+            assert(tmp_vec.ext_sys_flg != SPT_VEC_SYS_FLAG_DATA);
+        }
+        else
+        {
+            tmp_vec.flag = SPT_VEC_FLAG_RIGHT;
+        }
         if((pinsert->fs-1)-signpost > SPT_VEC_SIGNPOST_MASK)
         {
             vecid_s2 = vec_alloc_combo(pclst, g_thrd_id, &pvec_s2);
@@ -1083,7 +1089,12 @@ int do_insert_down_via_r(cluster_head_t *pclst, insert_info_t *pinsert, char *ne
     {
         pvec_a->down = vecid_b;
 
-        tmp_vec.rd = vecid_a;        
+        tmp_vec.rd = vecid_a;
+        if(tmp_vec.pos == pvec_a->pos)
+        {
+            spt_debug("@@@@@ bug\r\n");
+            while(1);
+        }
     }
     smp_mb();
     if(pinsert->key_val == atomic64_cmpxchg((atomic64_t *)pinsert->pkey_vec, 
@@ -1332,6 +1343,12 @@ refind_start:
     pcur = pqinfo->start_vec;
 
 refind_forward:
+    //debug
+    if(atomic_read((atomic_t *) &dbg_switch) == 1)
+    {
+        while(1);
+    }
+        
     if(pcur == NULL)
         goto refind_start;
     atomic64_add(1,(atomic64_t *)&g_dbg_info.refind_forward);
@@ -1380,6 +1397,42 @@ refind_forward:
             if(cur_vec.flag == SPT_VEC_FLAG_DATA)
             {
                 len = endbit - startbit;
+                cur_data = cur_vec.rd;
+                if(cur_data >= 0 && cur_data < SPT_INVALID)
+                {
+                    pcur_data = db_id_2_ptr(pclst, cur_data) + sizeof(spt_dh);
+                    smp_mb();
+                }
+                else if(cur_data == SPT_NULL)
+                {
+                    switch(op){
+                    case SPT_OP_FIND:
+                        return ret;
+                    case SPT_OP_INSERT:
+                        st_insert_info.pkey_vec= pcur;
+                        st_insert_info.key_val= cur_vec.val;
+                        ret = do_insert_first_set(pclst, &st_insert_info, pdata);
+                        if(ret == SPT_DO_AGAIN)
+                        {
+                            goto refind_start;
+                        }
+                        else
+                        {
+                            return ret;
+                        }
+                        break;
+                    case SPT_OP_DELETE:
+                        return ret;
+                    default:
+                        break;
+                    }
+
+                } 
+                else
+                {
+                    spt_debug("@@@@@ bug\r\n");
+                    while(1);
+                }
                 //ppre = pcur;
                 //pre_vec.val = cur_vec.val;
                 //pcur = NULL;
@@ -1704,6 +1757,11 @@ refind_forward:
                     }
 
                 }
+                else
+                {
+                    //SPT_NOMEM or SPT_WAIT_AMT;
+                    return cur_data;
+                }
                 
             }
             
@@ -1737,6 +1795,11 @@ refind_forward:
                     st_insert_info.fs = cmpres.smallfs+1;
                     st_insert_info.signpost = signpost;
                     st_insert_info.endbit = startbit+len;
+                    //for debug
+                    st_insert_info.pcur_data = pcur_data;
+                    st_insert_info.dataid = cur_data;
+                    st_insert_info.startbit = startbit;
+                    st_insert_info.cmpres = cmpres;
                     ret = do_insert_up_via_r(pclst, &st_insert_info, pdata);
                     if(ret == SPT_DO_AGAIN)
                     {
@@ -2121,10 +2184,9 @@ refind_forward:
     
     if(cur_data == SPT_INVALID)//yzx
     {
-        cur_data = get_data_id(pclst, pcur);
-        if(cur_data == SPT_DO_AGAIN)
-            goto refind_start;
-        
+        assert(cur_vec.flag == SPT_VEC_FLAG_DATA);
+        cur_data = cur_vec.rd;
+       
         pcur_data = db_id_2_ptr(pclst, cur_data) + sizeof(spt_dh);
     }
     pdh = (spt_dh *)(pcur_data - sizeof(spt_dh));

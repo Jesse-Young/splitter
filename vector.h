@@ -197,6 +197,10 @@ typedef struct spt_insert_info
     u64 fs;
     u64 cmp_pos;
     u64 endbit;//not include
+    //for debug
+    char *pcur_data;
+    u64 dataid;
+    vec_cmpret_t cmpres;
 }insert_info_t;
 
 
