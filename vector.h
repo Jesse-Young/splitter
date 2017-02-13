@@ -15,7 +15,7 @@
 #define SPT_VEC_VALID 0
 #define SPT_VEC_INVALID 1
 
-#define SPT_VEC_SIGNPOST_BIT 14
+#define SPT_VEC_SIGNPOST_BIT 15
 
 #define SPT_VEC_SIGNPOST_MASK ((1ul<<SPT_VEC_SIGNPOST_BIT)-1)
 
@@ -89,35 +89,6 @@ typedef struct chunk_head
     unsigned short dblk_free_head;
 }CHK_HEAD;
 
-typedef struct cluster_head
-{
-    int vec_head;
-    volatile unsigned int vec_free_head;
-    volatile unsigned int dblk_free_head;
-    volatile unsigned int blk_free_head;
-
-    unsigned int pg_num_max;
-    unsigned int pg_num_total;
-    unsigned int pg_cursor;
-    unsigned int blk_per_pg_bits;
-    unsigned int pg_ptr_bits;
-    unsigned int blk_per_pg;
-    unsigned int db_per_blk;
-    unsigned int vec_per_blk;    
-    
-    unsigned int free_blk_cnt;
-    unsigned int free_vec_cnt;
-    unsigned int free_dblk_cnt;
-    unsigned int used_vec_cnt;
-    unsigned int used_dblk_cnt;
-    unsigned int buf_db_cnt;
-    unsigned int buf_vec_cnt;
-    
-    unsigned int debug;
-    
-    volatile char *pglist[0];
-}cluster_head_t;
-
 typedef struct block_head
 {
     unsigned int magic;
@@ -145,21 +116,52 @@ typedef struct spt_vec_t
         struct 
         {
             volatile unsigned long long valid:      1;
-            volatile unsigned long long flag:       3;
-            volatile unsigned long long pos:        14;
+            volatile unsigned long long flag:       2;
+            volatile unsigned long long pos:        15;
             volatile unsigned long long down:       23;
             volatile unsigned long long rd:         23;    
         };
         struct 
         {
-            volatile unsigned long long dummy_flag:         4;
+            volatile unsigned long long dummy_flag:         3;
             volatile unsigned long long ext_sys_flg:        6;
             volatile unsigned long long ext_usr_flg:        6;
-            volatile unsigned long long idx:                25;
+            volatile unsigned long long idx:                24;
             volatile long long dummy_rd:           23;
         };
     };
 }spt_vec;
+
+typedef struct cluster_head
+{
+    int vec_head;
+    volatile unsigned int vec_free_head;
+    volatile unsigned int dblk_free_head;
+    volatile unsigned int blk_free_head;
+
+    spt_vec *pstart;
+    unsigned int pg_num_max;
+    unsigned int pg_num_total;
+    unsigned int pg_cursor;
+    unsigned int blk_per_pg_bits;
+    unsigned int pg_ptr_bits;
+    unsigned int blk_per_pg;
+    unsigned int db_per_blk;
+    unsigned int vec_per_blk;    
+    
+    unsigned int free_blk_cnt;
+    unsigned int free_vec_cnt;
+    unsigned int free_dblk_cnt;
+    unsigned int used_vec_cnt;
+    unsigned int used_dblk_cnt;
+    unsigned int buf_db_cnt;
+    unsigned int buf_vec_cnt;
+    
+    unsigned int debug;
+    
+    volatile char *pglist[0];
+}cluster_head_t;
+
 
 typedef struct vec_head
 {

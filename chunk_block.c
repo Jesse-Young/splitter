@@ -326,6 +326,7 @@ cluster_head_t * cluster_init()
     pvec->down = SPT_NULL;
     pvec->rd = SPT_NULL;
     phead->vec_head = vec;
+    phead->pstart = pvec;
 
     return phead;
 }

@@ -848,7 +848,7 @@ int do_insert_up_via_r(cluster_head_t *pclst, insert_info_t *pinsert, char *new_
     else
     {
         tmp_vec.rd = vecid_a;
-        if(tmp_vec.pos == pvec_a->pos)
+        if(tmp_vec.pos == pvec_a->pos && tmp_vec.pos != 0)
         {
             spt_debug("@@@@@ bug\r\n");
             dbg_switch = 1;
@@ -1090,7 +1090,7 @@ int do_insert_down_via_r(cluster_head_t *pclst, insert_info_t *pinsert, char *ne
         pvec_a->down = vecid_b;
 
         tmp_vec.rd = vecid_a;
-        if(tmp_vec.pos == pvec_a->pos)
+        if(tmp_vec.pos == pvec_a->pos && tmp_vec.pos != 0)
         {
             spt_debug("@@@@@ bug\r\n");
             while(1);
@@ -1354,7 +1354,14 @@ refind_forward:
     atomic64_add(1,(atomic64_t *)&g_dbg_info.refind_forward);
     ppre = NULL;
     cur_vec.val = pcur->val;
-    startbit = signpost + cur_vec.pos + 1;
+    if(pcur == pclst->pstart)
+    {
+        startbit = 0;
+    }
+    else
+    {
+        startbit = signpost + cur_vec.pos + 1;
+    }
     endbit = pqinfo->endbit;
     if(cur_vec.flag == SPT_VEC_FLAG_RAW)
     {
@@ -1387,7 +1394,7 @@ refind_forward:
     direction = SPT_DIR_START;
     cur_data = SPT_INVALID;
 
-    fs_pos = find_fs(pdata, startbit-1, endbit-1)+1;
+    fs_pos = find_fs(pdata, startbit, endbit);
     
     while(startbit<endbit)
     {
@@ -1765,7 +1772,7 @@ refind_forward:
                 
             }
             
-            cmp = diff_identify(pdata, pcur_data, startbit-1, len, &cmpres);
+            cmp = diff_identify(pdata, pcur_data, startbit, len, &cmpres);
             if(cmp == 0)
             {
                 startbit += len;              
@@ -1779,7 +1786,7 @@ refind_forward:
                 cur_vec.val = next_vec.val;
                 direction = SPT_RIGHT;
                 ///TODO:startbit already >= DATA_BIT_MAX
-                fs_pos = find_fs(pdata, startbit-1, endbit - startbit)+1;
+                fs_pos = find_fs(pdata, startbit, endbit - startbit);
                 continue;
             }
             /*insert up*/
@@ -1791,8 +1798,8 @@ refind_forward:
                 case SPT_OP_INSERT:
                     st_insert_info.pkey_vec= pcur;
                     st_insert_info.key_val= cur_vec.val;
-                    st_insert_info.cmp_pos = cmpres.pos+1;
-                    st_insert_info.fs = cmpres.smallfs+1;
+                    st_insert_info.cmp_pos = cmpres.pos;
+                    st_insert_info.fs = cmpres.smallfs;
                     st_insert_info.signpost = signpost;
                     st_insert_info.endbit = startbit+len;
                     //for debug
@@ -1824,17 +1831,17 @@ refind_forward:
                     return ret;
                 case SPT_OP_INSERT:
                     startbit +=len;
-                    if(cmpres.smallfs+1 == startbit && startbit<endbit)
+                    if(cmpres.smallfs == startbit && startbit<endbit)
                     {
-                        st_insert_info.fs = find_fs(pdata, startbit-1, endbit-startbit)+1;
+                        st_insert_info.fs = find_fs(pdata, startbit, endbit-startbit);
                     }
                     else
                     {
-                        st_insert_info.fs = cmpres.smallfs+1;
+                        st_insert_info.fs = cmpres.smallfs;
                     }
                     st_insert_info.pkey_vec= pcur;
                     st_insert_info.key_val= cur_vec.val;
-                    st_insert_info.cmp_pos = cmpres.pos+1;
+                    st_insert_info.cmp_pos = cmpres.pos;
                     st_insert_info.signpost = signpost;
                     ret = do_insert_down_via_r(pclst, &st_insert_info, pdata);
                     if(ret == SPT_DO_AGAIN)
@@ -2331,7 +2338,7 @@ int insert_data(cluster_head_t *pclst, char *pdata)
     qinfo.op = SPT_OP_INSERT;
     qinfo.signpost = 0;
     qinfo.start_vec = pvec_start;
-    qinfo.endbit = DATA_BIT_MAX+1;
+    qinfo.endbit = DATA_BIT_MAX;
     qinfo.data = pdata;
 
     return find_data(pclst,&qinfo);
@@ -2347,7 +2354,7 @@ int delete_data(cluster_head_t *pclst, char *pdata)
     qinfo.op = SPT_OP_DELETE;
     qinfo.signpost = 0;
     qinfo.start_vec = pvec_start;
-    qinfo.endbit = DATA_BIT_MAX+1;
+    qinfo.endbit = DATA_BIT_MAX;
     qinfo.data = pdata;
 
     return find_data(pclst,&qinfo);
@@ -4662,7 +4669,7 @@ void *spt_thread(void *arg)
     }
 #endif
 
-    for(i=0;i<1000000;i++)
+    for(i=0;i<100000;i++)
     {
         while(SPT_OK != spt_thread_start(g_thrd_id))
         {
