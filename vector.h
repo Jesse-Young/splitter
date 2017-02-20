@@ -104,7 +104,10 @@ typedef struct db_head_t
 typedef struct spt_data_hd
 {
     volatile int ref;/*引用计数*/
+    u16 size;
+    u16 rsv;
     int rank;/*for test*/
+    char *pdata;
 }spt_dh;
 
 
@@ -140,6 +143,7 @@ typedef struct cluster_head
     volatile unsigned int blk_free_head;
 
     spt_vec *pstart;
+//    int is_base_cluster;
     unsigned int pg_num_max;
     unsigned int pg_num_total;
     unsigned int pg_cursor;
@@ -328,7 +332,7 @@ typedef struct spt_dbg_info_st
 //#define DBLK_BITS 3
 #define DATA_SIZE 8
 #define RSV_SIZE 2
-#define DBLK_SIZE (DATA_SIZE + sizeof(spt_dh))
+#define DBLK_SIZE (sizeof(spt_dh))
 #define VBLK_BITS 3
 #define VBLK_SIZE (1<<VBLK_BITS)
 #define DATA_BIT_MAX (DATA_SIZE*8)

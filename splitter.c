@@ -573,16 +573,15 @@ int do_insert_dsignpost_right(cluster_head_t *pclst, insert_info_t *pinsert, cha
     char *pdata;
     spt_dh *pdh;
 
-    dataid = data_alloc_combo(pclst, g_thrd_id, &pdata);
-    if(pdata == 0)
+    dataid = data_alloc_combo(pclst, g_thrd_id, &pdh);
+    if(pdh == 0)
     {
         atomic64_add(1,(atomic64_t *)&g_dbg_info.oom_no_db);
         printf("\r\n%d\t%s", __LINE__, __FUNCTION__);
         return SPT_NOMEM;
     }
-    pdh = (spt_dh *)pdata;
     pdh->ref = 1;
-    pdata = pdata + sizeof(spt_dh);
+    pdata = pdh->pdata;
     memcpy(pdata, new_data, DATA_SIZE);
 
     tmp_vec.val = pinsert->key_val;
@@ -633,17 +632,16 @@ int do_insert_rsignpost_down(cluster_head_t *pclst, insert_info_t *pinsert, char
     int ret;
 
     pvec_s = 0;
-    dataid = data_alloc_combo(pclst, g_thrd_id, &pdata);
-    if(pdata == 0)
+    dataid = data_alloc_combo(pclst, g_thrd_id, &pdh);
+    if(pdh == 0)
     {
         /*ÉêÇëÐÂ¿é£¬²ð·Ö*/
         //assert(0);
         printf("\r\n%d\t%s", __LINE__, __FUNCTION__);
         return SPT_NOMEM;
     }
-    pdh = (spt_dh *)pdata;
     pdh->ref = 1;
-    pdata = pdata + sizeof(spt_dh);
+    pdata = pdh->pdata;
     memcpy(pdata, new_data, DATA_SIZE);
 
     tmp_vec.val = pinsert->key_val;
@@ -744,17 +742,16 @@ int do_insert_first_set(cluster_head_t *pclst, insert_info_t *pinsert, char *new
     spt_dh *pdh;
     int ret;
 
-    dataid = data_alloc_combo(pclst, g_thrd_id, &pdata);
-    if(pdata == 0)
+    dataid = data_alloc_combo(pclst, g_thrd_id, &pdh);
+    if(pdh == 0)
     {
         /*ÉêÇëÐÂ¿é£¬²ð·Ö*/
         atomic64_add(1,(atomic64_t *)&g_dbg_info.oom_no_db);
         printf("\r\n%d\t%s", __LINE__, __FUNCTION__);
         return SPT_NOMEM;
     }
-    pdh = (spt_dh *)pdata;
     pdh->ref = 1;
-    pdata = pdata + sizeof(spt_dh);
+    pdata = pdh->pdata;
     memcpy(pdata, new_data, DATA_SIZE);
 
     pcur = (spt_vec *)vec_id_2_ptr(pclst,pclst->vec_head);
@@ -793,17 +790,16 @@ int do_insert_up_via_r(cluster_head_t *pclst, insert_info_t *pinsert, char *new_
     pvec_b = 0;
     pvec_s = 0;
     pvec_s2 = 0;
-    dataid = data_alloc_combo(pclst, g_thrd_id, &pdata);
-    if(pdata == 0)
+    dataid = data_alloc_combo(pclst, g_thrd_id, &pdh);
+    if(pdh == 0)
     {
         /*ÉêÇëÐÂ¿é£¬²ð·Ö*/
         atomic64_add(1,(atomic64_t *)&g_dbg_info.oom_no_db);
         printf("\r\n%d\t%s", __LINE__, __FUNCTION__);
         return SPT_NOMEM;
     }
-    pdh = (spt_dh *)pdata;
     pdh->ref = 1;
-    pdata = pdata + sizeof(spt_dh);
+    pdata = pdh->pdata;
     memcpy(pdata, new_data, DATA_SIZE);
 
     tmp_vec.val = pinsert->key_val;
@@ -968,8 +964,8 @@ int do_insert_down_via_r(cluster_head_t *pclst, insert_info_t *pinsert, char *ne
     int ret;
 
     pvec_s = 0;
-    dataid = data_alloc_combo(pclst, g_thrd_id, &pdata);
-    if(pdata == 0)
+    dataid = data_alloc_combo(pclst, g_thrd_id, &pdh);
+    if(pdh == 0)
     {
         /*ÉêÇëÐÂ¿é£¬²ð·Ö*/
         //assert(0);
@@ -977,9 +973,8 @@ int do_insert_down_via_r(cluster_head_t *pclst, insert_info_t *pinsert, char *ne
         atomic64_add(1,(atomic64_t *)&g_dbg_info.oom_no_db);
         return SPT_NOMEM;
     }
-    pdh = (spt_dh *)pdata;
     pdh->ref = 1;
-    pdata = pdata + sizeof(spt_dh);
+    pdata = pdh->pdata;
     memcpy(pdata, new_data, DATA_SIZE);
 
     tmp_vec.val = pinsert->key_val;
@@ -1132,8 +1127,8 @@ int do_insert_last_down(cluster_head_t *pclst, insert_info_t *pinsert, char *new
     int ret;
 
     pvec_s = 0;
-    dataid = data_alloc_combo(pclst, g_thrd_id, &pdata);
-    if(pdata == 0)
+    dataid = data_alloc_combo(pclst, g_thrd_id, &pdh);
+    if(pdh == 0)
     {
         /*ÉêÇëÐÂ¿é£¬²ð·Ö*/
         //assert(0);
@@ -1141,9 +1136,8 @@ int do_insert_last_down(cluster_head_t *pclst, insert_info_t *pinsert, char *new
         atomic64_add(1,(atomic64_t *)&g_dbg_info.oom_no_db);
         return SPT_NOMEM;
     }
-    pdh = (spt_dh *)pdata;
     pdh->ref = 1;
-    pdata = pdata + sizeof(spt_dh);
+    pdata = pdh->pdata;
     memcpy(pdata, new_data, DATA_SIZE);
 
     tmp_vec.val = pinsert->key_val;
@@ -1220,8 +1214,8 @@ int do_insert_up_via_d(cluster_head_t *pclst, insert_info_t *pinsert, char *new_
     int ret;
 
     pvec_s = 0;
-    dataid = data_alloc_combo(pclst, g_thrd_id, &pdata);
-    if(pdata == 0)
+    dataid = data_alloc_combo(pclst, g_thrd_id, &pdh);
+    if(pdh == 0)
     {
         /*ÉêÇëÐÂ¿é£¬²ð·Ö*/
         //assert(0);
@@ -1229,9 +1223,8 @@ int do_insert_up_via_d(cluster_head_t *pclst, insert_info_t *pinsert, char *new_
         atomic64_add(1,(atomic64_t *)&g_dbg_info.oom_no_db);
         return SPT_NOMEM;
     }
-    pdh = (spt_dh *)pdata;
     pdh->ref = 1;
-    pdata = pdata + sizeof(spt_dh);
+    pdata = pdh->pdata;
     memcpy(pdata, new_data, DATA_SIZE);
 
     tmp_vec.val = pinsert->key_val;
@@ -1407,7 +1400,8 @@ refind_forward:
                 cur_data = cur_vec.rd;
                 if(cur_data >= 0 && cur_data < SPT_INVALID)
                 {
-                    pcur_data = db_id_2_ptr(pclst, cur_data) + sizeof(spt_dh);
+                    pdh = (spt_dh *)db_id_2_ptr(pclst, cur_data);
+                    pcur_data = pdh->pdata;
                     smp_mb();
                 }
                 else if(cur_data == SPT_NULL)
@@ -1734,7 +1728,8 @@ refind_forward:
                 cur_data = get_data_id(pclst, pcur);
                 if(cur_data >= 0 && cur_data < SPT_INVALID)
                 {
-                    pcur_data = db_id_2_ptr(pclst, cur_data) + sizeof(spt_dh);
+                    pdh = (spt_dh *)db_id_2_ptr(pclst, cur_data);
+                    pcur_data = pdh->pdata;
                     smp_mb();
                 }
                 else if(cur_data == SPT_DO_AGAIN)
@@ -2194,9 +2189,10 @@ refind_forward:
         assert(cur_vec.flag == SPT_VEC_FLAG_DATA);
         cur_data = cur_vec.rd;
        
-        pcur_data = db_id_2_ptr(pclst, cur_data) + sizeof(spt_dh);
+        pdh = (spt_dh *)db_id_2_ptr(pclst, cur_data);
+        pcur_data = pdh->pdata;
     }
-    pdh = (spt_dh *)(pcur_data - sizeof(spt_dh));
+    //pdh = (spt_dh *)(pcur_data - sizeof(spt_dh));
 
     switch(op){
     case SPT_OP_FIND:
@@ -4003,7 +3999,8 @@ void debug_cluster_travl(cluster_head_t *pclst)
     cur_data = st_vec_f.data;
     if(cur_data != SPT_INVALID)
     {
-        pcur_data = db_id_2_ptr(pclst, cur_data) + sizeof(spt_dh);
+        pdh = (spt_dh *)db_id_2_ptr(pclst, cur_data);
+        pcur_data = pdh->pdata;
     }
     debug_vec_print(&st_vec_f, cur_vecid);
 #if 0
@@ -4104,7 +4101,8 @@ void debug_cluster_travl(cluster_head_t *pclst)
                         }
                     }
                     cur_data = st_vec_f.data;
-                    pcur_data = (char *)db_id_2_ptr(pclst, cur_data) + sizeof(spt_dh);
+                    pdh = (spt_dh *)db_id_2_ptr(pclst, cur_data);
+                    pcur_data = pdh->pdata;
                     printf("\r\n@@data[%p],bit:%lld\r\n", pcur_data, st_vec_f.pos);
                     debug_vec_print(&st_vec_f, cur_vecid);
                     debug_travl_stack_push(pstack,&st_vec_f, signpost);

@@ -15,7 +15,7 @@
 #include <lf_order.h>
 
 void vec_buf_free(cluster_head_t *pclst, int thread_id);
-void data_buf_free(cluster_head_t *pclst, int thread_id);
+void db_buf_free(cluster_head_t *pclst, int thread_id);
 int fill_in_rsv_list_simple(cluster_head_t *pclst, int nr, int thread_id);
 
 #if 1 //for test
@@ -120,7 +120,14 @@ char* vec_id_2_ptr(cluster_head_t *pclst, unsigned int id)
     
 }
 #endif
-
+char *alloc_data()
+{
+    return malloc(DATA_SIZE);
+}
+void free_data(char *pdata)
+{
+    free(pdata);
+}
 
 char* cluster_alloc_page()
 {
@@ -432,7 +439,7 @@ int vec_add_blk(cluster_head_t *pclst)
 }
 
 
-unsigned int db_alloc(cluster_head_t *pclst, char **db)
+unsigned int db_alloc(cluster_head_t *pclst, spt_dh **db)
 {
     u32 db_id;
     db_head_t *pdb;
@@ -460,7 +467,7 @@ unsigned int db_alloc(cluster_head_t *pclst, char **db)
     atomic_sub(1, (atomic_t *)&pclst->free_dblk_cnt);
     atomic_add(1, (atomic_t *)&pclst->used_dblk_cnt);
     *db = (char *)pdb;
-
+    (*db)->pdata = NULL;
     return db_id;
 }
 
@@ -534,7 +541,7 @@ void vec_free(cluster_head_t *pcluster, int id)
     return ;
 }
 
-unsigned int data_alloc_from_buf(cluster_head_t *pclst, int thread_id, char **db)
+unsigned int db_alloc_from_buf(cluster_head_t *pclst, int thread_id, spt_dh **db)
 {
     spt_thrd_data *pthrd_data = &g_thrd_h->thrd_data[thread_id];
     u32 list_vec_id, ret_id;
@@ -561,7 +568,7 @@ unsigned int data_alloc_from_buf(cluster_head_t *pclst, int thread_id, char **db
         return -1;
     }
     ret_id = pnode->id;
-    *db = db_id_2_ptr(pclst,ret_id);
+    *db = (spt_dh *)db_id_2_ptr(pclst,ret_id);
     pnode->id = SPT_NULL;
     if(pthrd_data->data_alloc_out == pthrd_data->data_free_in)
     {
@@ -704,7 +711,7 @@ int fill_in_rsv_list(cluster_head_t *pclst, int nr, int thread_id)
     }
     if(pthrd_data->data_list_cnt > SPT_BUF_DATA_WATERMARK)
     {
-        data_buf_free(pclst, thread_id);
+        db_buf_free(pclst, thread_id);
     }    
     if(atomic_read((atomic_t *)&pthrd_data->vec_list_cnt) > SPT_BUF_VEC_WATERMARK
         || (atomic_read((atomic_t *)&pthrd_data->data_list_cnt) > SPT_BUF_DATA_WATERMARK))
@@ -822,12 +829,13 @@ int vec_free_to_buf(cluster_head_t *pclst, int id, int thread_id)
     }
 }
 
-void data_buf_free(cluster_head_t *pclst, int thread_id)
+void db_buf_free(cluster_head_t *pclst, int thread_id)
 {
     spt_thrd_data *pthrd_data = &g_thrd_h->thrd_data[thread_id];
     u32 list_vec_id, tmp_id;
     u32 tick;
     spt_buf_list *pnode;
+    spt_dh *pdh;
 
     tick = atomic_add_return(0, (atomic_t *)&g_thrd_h->tick) & SPT_BUF_TICK_MASK;
     list_vec_id = pthrd_data->data_alloc_out;
@@ -844,6 +852,10 @@ void data_buf_free(cluster_head_t *pclst, int thread_id)
             pthrd_data->data_alloc_out = list_vec_id;
             return;
         }
+        pdh = (spt_dh *)db_id_2_ptr(pclst, pnode->id);
+        if(pdh->pdata != NULL)
+            free_data(pdh->pdata);
+        
         db_free(pclst, pnode->id);
         tmp_id = list_vec_id;
         list_vec_id = pnode->next;
@@ -942,7 +954,7 @@ int db_free_to_buf(cluster_head_t *pclst, int id, int thread_id)
 
     if(pthrd_data->data_list_cnt > SPT_BUF_DATA_WATERMARK)
     {
-        data_buf_free(pclst, thread_id);
+        db_buf_free(pclst, thread_id);
     }
     if(atomic_read((atomic_t *)&pthrd_data->data_list_cnt) > SPT_BUF_DATA_WATERMARK)
     {
@@ -966,13 +978,24 @@ unsigned int vec_alloc_combo(cluster_head_t *pclst, int thread_id, spt_vec **vec
     return ret;
 }
 
-unsigned int data_alloc_combo(cluster_head_t *pclst, int thread_id, char **db)
+unsigned int data_alloc_combo(cluster_head_t *pclst, int thread_id, spt_dh **db)
 {
     u32 ret;
-    ret = data_alloc_from_buf(pclst, thread_id, db);
+    ret = db_alloc_from_buf(pclst, thread_id, db);
     if(ret == -1)
     {
         ret = db_alloc(pclst, db);
+        if(ret == -1)
+            return -1;
+    }
+    if((*db)->pdata == NULL)
+    {
+        if(((*db)->pdata = alloc_data()) == NULL)
+        {
+            db_free_to_buf(pclst, ret, thread_id);
+            *db = NULL;
+            return -1;
+        } 
     }
     return ret;
 }
