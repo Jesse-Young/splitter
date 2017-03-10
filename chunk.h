@@ -146,10 +146,10 @@ extern char* vec_id_2_ptr(cluster_head_t *pclst, unsigned int id);
 #define SPT_NOMEM -2
 #define SPT_WAIT_AMT -3
 #define SPT_DO_AGAIN -4
-#define SPT_NOT_FOUND -5
+#define SPT_NOT_FOUND 1
 
 unsigned int db_alloc(cluster_head_t *pclst, spt_dh **db);
-cluster_head_t * cluster_init();
+cluster_head_t * cluster_init(int is_bottom, u64 startbit, u64 endbit);
 int vec_free_to_buf(cluster_head_t *pclst, int id, int thread_id);
 int db_free_to_buf(cluster_head_t *pcluster, int id, int thread_id);
 unsigned int vec_alloc_combo(cluster_head_t *pclst, int thread_id, spt_vec **vec);
@@ -159,8 +159,12 @@ void db_free_to_buf_simple(cluster_head_t *pclst, int id, int thread_id);
 int fill_in_rsv_list(cluster_head_t *pclst, int nr, int thread_id);
 int rsv_list_fill_cnt(cluster_head_t *pclst, int thread_id);
 int fill_in_rsv_list_simple(cluster_head_t *pclst, int nr, int thread_id);
+void cluster_destroy(cluster_head_t *pclst);
+void free_data(char *p, u8 flag);
+
 
 void test_vec_alloc_n_times(cluster_head_t *pclst);
+void debug_data_print(char *pdata);
 
 #endif
 

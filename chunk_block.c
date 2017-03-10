@@ -124,9 +124,10 @@ char *alloc_data()
 {
     return malloc(DATA_SIZE);
 }
-void free_data(char *pdata)
+void free_data(char *p, u8 flag)
 {
-    free(pdata);
+    if(flag)
+        free(p);
 }
 
 char* cluster_alloc_page()
@@ -284,7 +285,7 @@ void cluster_destroy(cluster_head_t *pclst)
     printf("%d\t%s\r\n", __LINE__, __FUNCTION__);
 }
 
-cluster_head_t * cluster_init()
+cluster_head_t * cluster_init(int is_bottom, u64 startbit, u64 endbit)
 {
     cluster_head_t *phead;
     int ptr_bits;
@@ -320,7 +321,9 @@ cluster_head_t * cluster_init()
     phead->dblk_free_head = -1;
     
     phead->debug = 1;
-
+    phead->is_bottom = is_bottom;
+    phead->startbit = startbit;
+    phead->endbit = endbit;
     vec = vec_alloc(phead, &pvec);
     if(pvec == 0)
     {
@@ -328,8 +331,8 @@ cluster_head_t * cluster_init()
         return NULL;
     }
     pvec->val = 0;
-    pvec->flag = SPT_VEC_FLAG_DATA;
-    pvec->pos = 0;
+    pvec->type = SPT_VEC_DATA;
+    pvec->pos = startbit - 1;
     pvec->down = SPT_NULL;
     pvec->rd = SPT_NULL;
     phead->vec_head = vec;
@@ -466,7 +469,7 @@ unsigned int db_alloc(cluster_head_t *pclst, spt_dh **db)
     }while(db_id != atomic_cmpxchg((atomic_t *)&pclst->dblk_free_head, db_id, new_head));
     atomic_sub(1, (atomic_t *)&pclst->free_dblk_cnt);
     atomic_add(1, (atomic_t *)&pclst->used_dblk_cnt);
-    *db = (char *)pdb;
+    *db = (spt_dh *)pdb;
     (*db)->pdata = NULL;
     return db_id;
 }
@@ -795,7 +798,7 @@ int vec_free_to_buf(cluster_head_t *pclst, int id, int thread_id)
     spt_vec *pvec;
 
     pvec = (spt_vec *)vec_id_2_ptr(pclst, id);
-    pvec->flag = SPT_VEC_FLAG_RAW;
+    pvec->status = SPT_VEC_RAW;
     list_vec_id = vec_alloc_from_rsvlist(pclst, thread_id, (spt_vec **)&pnode);
     tick = atomic_add_return(0, (atomic_t *)&g_thrd_h->tick) & SPT_BUF_TICK_MASK;
     pnode->tick = tick;
@@ -854,8 +857,8 @@ void db_buf_free(cluster_head_t *pclst, int thread_id)
         }
         pdh = (spt_dh *)db_id_2_ptr(pclst, pnode->id);
         if(pdh->pdata != NULL)
-            free_data(pdh->pdata);
-        
+            pclst->freedata(pdh->pdata, spt_data_free_flag(pdh));
+
         db_free(pclst, pnode->id);
         tmp_id = list_vec_id;
         list_vec_id = pnode->next;
@@ -876,7 +879,7 @@ void vec_free_to_buf_simple(cluster_head_t *pclst, int id, int thread_id)
     spt_vec *pvec;
 
     pvec = (spt_vec *)vec_id_2_ptr(pclst, id);
-    pvec->flag = SPT_VEC_FLAG_RAW;
+    pvec->status = SPT_VEC_RAW;
     list_vec_id = vec_alloc_from_rsvlist(pclst, thread_id, (spt_vec **)&pnode);
     tick = atomic_add_return(0, (atomic_t *)&g_thrd_h->tick) & SPT_BUF_TICK_MASK;
     pnode->tick = tick;
@@ -988,6 +991,7 @@ unsigned int data_alloc_combo(cluster_head_t *pclst, int thread_id, spt_dh **db)
         if(ret == -1)
             return -1;
     }
+    #if 0 
     if((*db)->pdata == NULL)
     {
         if(((*db)->pdata = alloc_data()) == NULL)
@@ -997,6 +1001,7 @@ unsigned int data_alloc_combo(cluster_head_t *pclst, int thread_id, spt_dh **db)
             return -1;
         } 
     }
+    #endif
     return ret;
 }
 

@@ -5,15 +5,16 @@
 #include <lf_order.h>
 
 
-#define SPT_VEC_FLAG_RIGHT 0
-#define SPT_VEC_FLAG_DATA 1
-#define SPT_VEC_FlAG_SIGNPOST 2
-#define SPT_VEC_FLAG_RAW 3
+#define SPT_VEC_RIGHT 0
+#define SPT_VEC_DATA 1
+#define SPT_VEC_SIGNPOST 2
 #define SPT_VEC_SYS_FLAG_DATA 1
 
 
 #define SPT_VEC_VALID 0
 #define SPT_VEC_INVALID 1
+#define SPT_VEC_RAW 2
+
 
 #define SPT_VEC_SIGNPOST_BIT 15
 
@@ -32,9 +33,9 @@
 #define POW256(x) (1<<(8*x))
 #endif
 
-#define spt_set_invalid_flag(x) (x.valid = SPT_VEC_INVALID)
-#define spt_set_right_flag(x) (x.flag = SPT_VEC_FLAG_RIGHT)
-#define spt_set_data_flag(x) (x.flag = SPT_VEC_FLAG_DATA)
+#define spt_set_vec_invalid(x) (x.status = SPT_VEC_INVALID)
+#define spt_set_right_flag(x) (x.type = SPT_VEC_RIGHT)
+#define spt_set_data_flag(x) (x.type = SPT_VEC_DATA)
 
 #define SPT_PTR_MASK (0x00000000fffffffful)
 #define SPT_PTR_VEC (0ul)
@@ -47,6 +48,20 @@
 #define SPT_PER_THRD_RSV_CNT 5
 #define SPT_BUF_VEC_WATERMARK 200
 #define SPT_BUF_DATA_WATERMARK 100
+
+#define spt_data_free_flag(x) (x->rsv&0x1)
+#define spt_set_data_free_flag(x,y) (x->rsv |= y)
+#define spt_set_data_not_free(x) (x->rsv|=0x1)
+
+
+#define SPT_SORT_ARRAY_SIZE (4096*8)
+#define SPT_DVD_CNT_PER_TIME (100)
+typedef struct
+{
+    int idx;
+    int size;
+    char *array[0];
+}spt_sort_info;
 
 typedef struct
 {
@@ -118,8 +133,8 @@ typedef struct spt_vec_t
         volatile unsigned long long val;
         struct 
         {
-            volatile unsigned long long valid:      1;
-            volatile unsigned long long flag:       2;
+            volatile unsigned long long status:      2;
+            volatile unsigned long long type:       1;
             volatile unsigned long long pos:        15;
             volatile unsigned long long down:       23;
             volatile unsigned long long rd:         23;    
@@ -143,7 +158,11 @@ typedef struct cluster_head
     volatile unsigned int blk_free_head;
 
     spt_vec *pstart;
-//    int is_base_cluster;
+    u64 startbit;
+    u64 endbit;
+    int is_bottom;
+
+    volatile unsigned int data_cnt;
     unsigned int pg_num_max;
     unsigned int pg_num_total;
     unsigned int pg_cursor;
@@ -162,9 +181,27 @@ typedef struct cluster_head
     unsigned int buf_vec_cnt;
     
     unsigned int debug;
-    
+    void (*freedata)(char *p, u8 flag);
     volatile char *pglist[0];
 }cluster_head_t;
+
+typedef struct
+{
+    cluster_head_t *pdst_clst;
+    cluster_head_t *puclst;
+    int divided_times;
+    int down_is_bottom;
+    char **up_vb_arr;
+    char **down_vb_arr;
+}spt_divided_info;
+
+
+typedef struct dh_extent_t
+{
+    unsigned int hang_vec;
+    cluster_head_t *plower_clst;
+    char *data;
+}spt_dh_ext;
 
 
 typedef struct vec_head
@@ -186,11 +223,20 @@ typedef struct vec_cmpret
 
 typedef struct spt_query_info
 {
-    spt_vec *start_vec;
+    spt_vec *pstart_vec;
     u64 signpost;
+    /****
+    对于插入操作 
+    若此数据是新数据，返回时将data置空；
+    若是重复数据不改变data指针，由调用者释放内存。
+    ****/
     char *data;
     u64 endbit;
-    u8  op;
+    u32 startid;
+    u8 op;
+    u8 free_flag;//删除时标记是否释放数据内存。
+    char cmp_result;
+    u32 db_id;//查询\插入\删除的返回值
 }query_info_t;
 
 
@@ -203,9 +249,10 @@ typedef struct spt_insert_info
     u64 fs;
     u64 cmp_pos;
     u64 endbit;//not include
+    u32 dataid;
+    u32 key_id;
     //for debug
     char *pcur_data;
-    u64 dataid;
     vec_cmpret_t cmpres;
 }insert_info_t;
 
@@ -213,13 +260,13 @@ typedef struct spt_insert_info
 
 typedef struct spt_free_vector_node
 {
-    int                            id;
+    int id;
     struct spt_free_vector_node    *next;
 }spt_free_vec_node;
 
 typedef struct spt_del_data_node_st
 {
-    int                                id;
+    int id;
     struct spt_del_data_node_st    *next;
 }spt_del_data_node;
 
