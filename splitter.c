@@ -35,15 +35,20 @@ u64 g_data[DBG_DATA_NUM]={0xee,0xbe,0xba,0xb6,0xae,
                           0xca,0x91,0x8a,0x36,0x06};
 int dbg_switch=0;
 
+u64 g_test[DBG_DATA_NUM]={0xe0,0xb0,0xbb,0xbd,0xaf,
+                          0xc4,0x9f,0x01,0x60,0x08};
+#define TEST_DATA_MAX (100)
+u64 *gd;
+
 u64 find_fs(char *a, u64 start, u64 len);
 int diff_identify(char *a, char *b,u64 start, u64 len, vec_cmpret_t *result);
 int spt_thread_start(int thread);
 void spt_thread_exit(int thread);
 void spt_thread_wait(int n, int thread);
 int find_data(cluster_head_t *pclst, query_info_t *pqinfo);
-int insert_data(cluster_head_t *pclst, char *pdata);
-int delete_data_no_free(cluster_head_t *pclst, char *pdata);
-int delete_data(cluster_head_t *pclst, char *pdata);
+int do_insert_data(cluster_head_t *pclst, char *pdata, spt_get_key pf);
+int do_delete_data_no_free(cluster_head_t *pclst, char *pdata, spt_get_key pf);
+int do_delete_data(cluster_head_t *pclst, char *pdata, spt_get_key pf);
 
 void spt_bit_clear(u8 *p, u64 start, u64 len)
 {
@@ -257,6 +262,20 @@ u64 ucfind_firt_set(u8 byte)
     }
     return 8;
 }
+
+char *spt_bottom_get_key(char *pdata)
+{
+    return pdata;
+}
+
+char *spt_upper_get_key(char *pdata)
+{
+    spt_dh_ext *ext_head;
+
+    ext_head = (spt_dh_ext *)pdata;
+    return ext_head->data;
+}
+
 
 char *get_real_data(cluster_head_t *pclst, char *pdata)
 {
@@ -1408,7 +1427,13 @@ int find_lowest_data(cluster_head_t *pclst, spt_vec *start_vec)
     {
         if(cur_vec.type == SPT_VEC_DATA)
         {
-            return cur_vec.rd;
+            if(cur_vec.down == SPT_NULL)
+                return cur_vec.rd;
+            else
+            {
+                pcur = (spt_vec *)vec_id_2_ptr(pclst, cur_vec.down);
+                cur_vec.val = pcur->val;
+            }
         }
         else if(cur_vec.type == SPT_VEC_RIGHT)
         {
@@ -1459,6 +1484,7 @@ spt_sort_info *spt_order_array_init(cluster_head_t *pclst, int size)
     if(psort_ar == NULL)
         return NULL;
     psort_ar->idx = 0;
+    psort_ar->cnt = 0;
     psort_ar->size = size;
     return psort_ar;
 }
@@ -1477,7 +1503,7 @@ spt_sort_info *spt_cluster_sort(cluster_head_t *pclst)
         return 0;
     }
     index = 0;
-    psort = spt_order_array_init(pclst, pclst->used_dblk_cnt);
+    psort = spt_order_array_init(pclst, pclst->data_total);
     if(psort == NULL)
     {
         free(stack);
@@ -1538,6 +1564,7 @@ spt_sort_info *spt_cluster_sort(cluster_head_t *pclst)
             pdh = (spt_dh *)db_id_2_ptr(pclst, cur_data);
             psort->array[psort->idx] = pdh->pdata;
             psort->idx = (psort->idx+1)%psort->size;
+            psort->cnt++;
             //debug_pdh_data_print(pclst, pdh);
             if(index == 0)
             {
@@ -1603,8 +1630,6 @@ void spt_divided_info_free(spt_divided_info *pdvd_info)
         }
         free(pdvd_info->down_vb_arr);
     }
-    if(pdvd_info->pdst_clst)
-        cluster_destroy(pdvd_info->pdst_clst);
     free(pdvd_info);
     return;
 }
@@ -1624,15 +1649,6 @@ spt_divided_info *spt_divided_info_init(spt_sort_info *psort, int dvd_times,
     pdvd_info->divided_times = dvd_times;
     pdvd_info->down_is_bottom = pdclst->is_bottom;
     pdvd_info->puclst = puclst;
-
-    pdvd_info->pdst_clst = cluster_init(pdvd_info->down_is_bottom, 
-                                        pdclst->startbit, pdclst->endbit);
-    if(pdvd_info->pdst_clst == NULL)
-    {
-        spt_divided_info_free(pdvd_info);
-        return NULL;
-    }
-    pdvd_info->pdst_clst->freedata = pdclst->freedata;
 
     pdvd_info->up_vb_arr = (char **)malloc(sizeof(char *)*dvd_times);
     if(pdvd_info->up_vb_arr == NULL)
@@ -1658,7 +1674,7 @@ spt_divided_info *spt_divided_info_init(spt_sort_info *psort, int dvd_times,
             return NULL;
         }
         pNth_data = get_about_Nth_smallest_data(psort, n);
-        psrc = get_real_data(pdclst, pNth_data);
+        psrc = pdclst->get_key(pNth_data);
 
         pext_head = (spt_dh_ext *)u_vb_array[loop];
         pdata = (char *)(pext_head + 1);
@@ -1690,13 +1706,25 @@ spt_divided_info *spt_divided_info_init(spt_sort_info *psort, int dvd_times,
             pext_head->plower_clst = ((spt_dh_ext *)pNth_data)->plower_clst;
         }
     }
+    pdvd_info->pdst_clst = cluster_init(pdvd_info->down_is_bottom, 
+                                        pdclst->startbit, 
+                                        pdclst->endbit, 
+                                        pdclst->thrd_total,
+                                        pdclst->get_key);
+    if(pdvd_info->pdst_clst == NULL)
+    {
+        spt_divided_info_free(pdvd_info);
+        return NULL;
+    }
+    pdvd_info->pdst_clst->freedata = pdclst->freedata;
+    
     return pdvd_info;
 }
 
-int divide_sub_cluster(cluster_head_t *pclst, spt_dh *pup, spt_dh *pdown)
+int divide_sub_cluster(cluster_head_t *pclst, spt_dh_ext *pup)
 {
     int loop, dataid, ins_dvb_id;
-    int move_time = 100;
+    int move_time = 2;
 //    int move_per_cnt = 100;
     spt_sort_info *psort;
     spt_divided_info *pdinfo;
@@ -1705,7 +1733,7 @@ int divide_sub_cluster(cluster_head_t *pclst, spt_dh *pup, spt_dh *pdown)
     spt_dh *pdh;
     query_info_t qinfo = {0};
 
-    pext_head = (spt_dh_ext *)pup->pdata;
+    pext_head = pup;
     plower_clst = pext_head->plower_clst;
     spt_thread_start(g_thrd_id);
     
@@ -1738,7 +1766,7 @@ int divide_sub_cluster(cluster_head_t *pclst, spt_dh *pup, spt_dh *pdown)
         thread_out
         ***********/
         spt_thread_start(g_thrd_id);
-        insert_data(pclst, pdinfo->up_vb_arr[loop]);
+        do_insert_data(pclst, pdinfo->up_vb_arr[loop], pclst->get_key);
         spt_thread_exit(g_thrd_id);
         spt_thread_wait(2, g_thrd_id);
         spt_thread_start(g_thrd_id);
@@ -1747,8 +1775,9 @@ int divide_sub_cluster(cluster_head_t *pclst, spt_dh *pup, spt_dh *pdown)
         qinfo.signpost = 0;
         qinfo.pstart_vec = plower_clst->pstart;
         qinfo.startid = plower_clst->vec_head;
-        qinfo.endbit = pclst->endbit;
+        qinfo.endbit = plower_clst->endbit;
         qinfo.data = pdinfo->down_vb_arr[loop];
+        qinfo.get_key = plower_clst->get_key;
         if(find_data(plower_clst, &qinfo)!=SPT_OK)
         {
             assert(0);
@@ -1762,8 +1791,8 @@ int divide_sub_cluster(cluster_head_t *pclst, spt_dh *pup, spt_dh *pdown)
         {
             dataid = find_lowest_data(plower_clst, plower_clst->pstart);
             pdh = (spt_dh *)db_id_2_ptr(plower_clst, dataid);
-            delete_data_no_free(plower_clst, pdh->pdata);
-            insert_data(pdst_clst, pdh->pdata);
+            do_delete_data_no_free(plower_clst, pdh->pdata, plower_clst->get_key);
+            do_insert_data(pdst_clst, pdh->pdata, pdst_clst->get_key);
             if(dataid == ins_dvb_id)
             {
                 break;
@@ -1775,30 +1804,60 @@ int divide_sub_cluster(cluster_head_t *pclst, spt_dh *pup, spt_dh *pdown)
             if(dataid == ins_dvb_id)
             {
                 //pdh = (spt_dh *)db_id_2_ptr(plower_clst, dataid);
-                delete_data_no_free(plower_clst, pdh->pdata);
-                insert_data(pdst_clst, pdh->pdata);
+                do_delete_data_no_free(plower_clst, pdh->pdata, plower_clst->get_key);
+                do_insert_data(pdst_clst, pdh->pdata, pdst_clst->get_key);
             }
             else
             {
-                delete_data(pdst_clst, pdh->pdata);
+                do_delete_data(pdst_clst, pdh->pdata, pdst_clst->get_key);
                 break;
             }
         }
         pext_head = (spt_dh_ext *)pdinfo->up_vb_arr[loop];
         pext_head->plower_clst = pdst_clst;
-        delete_data(pclst, pdinfo->up_vb_arr[loop-1]);
-        pdinfo->up_vb_arr[loop-1] = 0;
+        if(loop > 0)
+        {
+            do_delete_data(pclst, pdinfo->up_vb_arr[loop-1], pclst->get_key);
+            pdinfo->up_vb_arr[loop-1] = 0;
+        }
         spt_thread_exit(g_thrd_id);
     }
+    pdinfo->up_vb_arr[loop-1] = 0;
     /*释放资源，虚拟挡板的释放由cluster的缓冲区中来做*/
     spt_divided_info_free(pdinfo);
+    spt_order_array_free(psort);
+    return SPT_OK;
+}
+int spt_divided_scan(cluster_head_t *pclst)
+{
+    spt_sort_info *psort;
+    spt_dh_ext *pdh_ext;
+    cluster_head_t *plower_clst;
+    int i;
+
+    psort = spt_cluster_sort(pclst);
+    if(psort == NULL)
+    {
+        spt_debug("psort ERR\r\n");
+        return SPT_ERR;
+    }
+    for(i=0;i<psort->size;i++)
+    {
+        pdh_ext = (spt_dh_ext *)psort->array[i];
+        plower_clst = pdh_ext->plower_clst;
+        if(plower_clst->data_total >= SPT_DVD_THRESHOLD_VA)
+        {
+            divide_sub_cluster(pclst,pdh_ext);
+        }
+    }
+    spt_order_array_free(psort);
     return SPT_OK;
 }
 
 /*ret:1查询不到；0删除成功；-1错误*/
 int find_data(cluster_head_t *pclst, query_info_t *pqinfo)
 {
-    int cur_data, vecid, cmp, op, cur_vecid, pre_vecid, next_vecid;
+    int cur_data, vecid, cmp, op, cur_vecid, pre_vecid, next_vecid, cnt;
     spt_vec *pcur, *pnext, *ppre;
     spt_vec tmp_vec, cur_vec, next_vec;
     char *pcur_data;//*ppre_data,
@@ -1810,15 +1869,33 @@ int find_data(cluster_head_t *pclst, query_info_t *pqinfo)
     insert_info_t st_insert_info;
     char *pdata, *prdata;
     spt_dh *pdh;
+    spt_get_key get_key;
 //    query_info_t *pqinfo = pquery_info;
+    if(pclst->status == SPT_WAIT_AMT)
+    {
+        cnt = rsv_list_fill_cnt(pclst, g_thrd_id);
+        ret = fill_in_rsv_list(pclst, cnt, g_thrd_id);
+        if(ret == SPT_OK)
+        {
+            pclst->status = SPT_OK;
+        }
+        else
+        {
+            return ret;
+        }
+    }
     op = pqinfo->op;
 
     atomic64_add(1,(atomic64_t *)&g_dbg_info.find_data);
     pdata = pqinfo->data;
+    if(pqinfo->get_key == NULL)
+        get_key = pclst->get_key;
+    else
+        get_key = pqinfo->get_key;
 
 refind_start:
     atomic64_add(1,(atomic64_t *)&g_dbg_info.refind_start);
-    prdata = get_real_data(pclst, pqinfo->data);
+    prdata = get_key(pqinfo->data);
     signpost = pqinfo->signpost;
     pcur = pqinfo->pstart_vec;
     cur_vecid = pre_vecid = pqinfo->startid;    
@@ -1891,7 +1968,7 @@ refind_forward:
                 if(cur_data >= 0 && cur_data < SPT_INVALID)
                 {
                     pdh = (spt_dh *)db_id_2_ptr(pclst, cur_data);
-                    pcur_data = get_real_data(pclst, pdh->pdata);
+                    pcur_data = pclst->get_key( pdh->pdata);
                     smp_mb();
                 }
                 else if(cur_data == SPT_NULL)
@@ -2236,7 +2313,7 @@ refind_forward:
                 if(cur_data >= 0 && cur_data < SPT_INVALID)
                 {
                     pdh = (spt_dh *)db_id_2_ptr(pclst, cur_data);
-                    pcur_data = get_real_data(pclst,pdh->pdata);
+                    pcur_data = pclst->get_key(pdh->pdata);
                     smp_mb();
                 }
                 else if(cur_data == SPT_DO_AGAIN)
@@ -2304,8 +2381,12 @@ refind_forward:
             {
                 switch(op){
                 case SPT_OP_FIND:
-                    pqinfo->db_id = cur_data;
-                    pqinfo->cmp_result = 1;
+                    if(pqinfo->op == SPT_OP_FIND)
+                    {
+                        pqinfo->db_id = cur_data;
+                        pqinfo->vec_id = cur_vecid;
+                        pqinfo->cmp_result = 1;
+                    }
                     return ret;
                 case SPT_OP_INSERT:
                     st_insert_info.pkey_vec= pcur;
@@ -2346,8 +2427,12 @@ refind_forward:
             {
                 switch(op){
                 case SPT_OP_FIND:
-                    pqinfo->db_id = cur_data;
-                    pqinfo->cmp_result = -1;                    
+                    if(pqinfo->op == SPT_OP_FIND)
+                    {
+                        pqinfo->db_id = cur_data;
+                        pqinfo->vec_id = cur_vecid;
+                        pqinfo->cmp_result = -1;
+                    }
                     return ret;
                 case SPT_OP_INSERT:
                     startbit +=len;
@@ -2412,7 +2497,7 @@ refind_forward:
                                 cur_data = get_data_id(pclst, pcur);
                                 if(cur_data >= 0 && cur_data < SPT_INVALID)
                                 {
-                                    pqinfo->db_id = cur_data;
+                                    //pqinfo->db_id = cur_data;
                                 }
                                 else if(cur_data == SPT_DO_AGAIN)
                                     goto refind_start;
@@ -2422,8 +2507,12 @@ refind_forward:
                                     return cur_data;
                                 }
                             }
-                            pqinfo->db_id = cur_data;
-                            pqinfo->cmp_result = -1;
+                            if(pqinfo->op == SPT_OP_FIND)
+                            {
+                                pqinfo->db_id = cur_data;
+                                pqinfo->vec_id = cur_vecid;
+                                pqinfo->cmp_result = -1;
+                            }
                             return ret;
                         case SPT_OP_INSERT:
                             st_insert_info.pkey_vec= pcur;
@@ -2715,7 +2804,7 @@ refind_forward:
                             cur_data = get_data_id(pclst, pcur);
                             if(cur_data >= 0 && cur_data < SPT_INVALID)
                             {
-                                pqinfo->db_id = cur_data;
+                                //pqinfo->db_id = cur_data;
                             }
                             else if(cur_data == SPT_DO_AGAIN)
                                 goto refind_start;
@@ -2725,8 +2814,12 @@ refind_forward:
                                 return cur_data;
                             }
                         }
-                        pqinfo->db_id = cur_data;
-                        pqinfo->cmp_result = 1;
+                        if(pqinfo->op == SPT_OP_FIND)
+                        {
+                            pqinfo->db_id = cur_data;
+                            pqinfo->vec_id = cur_vecid;
+                            pqinfo->cmp_result = -1;
+                        }
                         return ret;
                     case SPT_OP_INSERT:
                         st_insert_info.pkey_vec= pcur;
@@ -2778,12 +2871,16 @@ refind_forward:
     
     if(cur_data == SPT_INVALID)//yzx
     {
-        assert(cur_vec.type == SPT_VEC_DATA);
+        //assert(cur_vec.type == SPT_VEC_DATA);
+        if((cur_vec.type != SPT_VEC_DATA))
+        {
+            while(1);
+        }
         cur_data = cur_vec.rd;
        
         pdh = (spt_dh *)db_id_2_ptr(pclst, cur_data);
         smp_mb();
-        pcur_data = get_real_data(pclst,pdh->pdata);
+        pcur_data = pclst->get_key(pdh->pdata);
     }
     //pdh = (spt_dh *)(pcur_data - sizeof(spt_dh));
 
@@ -2792,6 +2889,7 @@ refind_forward:
         if(pqinfo->op == SPT_OP_FIND)
         {
             pqinfo->db_id = cur_data;
+            pqinfo->vec_id = cur_vecid;
             pqinfo->cmp_result = 0;
         }
         return ret;
@@ -2879,7 +2977,7 @@ refind_forward:
     return SPT_ERR;
 }
 
-int insert_data(cluster_head_t *pclst, char *pdata)
+int do_insert_data(cluster_head_t *pclst, char *pdata, spt_get_key pf)
 {
     query_info_t qinfo = {0};
     spt_vec *pvec_start;
@@ -2892,11 +2990,12 @@ int insert_data(cluster_head_t *pclst, char *pdata)
     qinfo.startid = pclst->vec_head;
     qinfo.endbit = pclst->endbit;
     qinfo.data = pdata;
+    qinfo.get_key = pf;
 
     return find_data(pclst,&qinfo);
 }
 
-int delete_data(cluster_head_t *pclst, char *pdata)
+int do_delete_data(cluster_head_t *pclst, char *pdata, spt_get_key pf)
 {
     query_info_t qinfo = {0};
     spt_vec *pvec_start;
@@ -2910,11 +3009,12 @@ int delete_data(cluster_head_t *pclst, char *pdata)
     qinfo.endbit = DATA_BIT_MAX;
     qinfo.data = pdata;
     qinfo.free_flag = 1;
+    qinfo.get_key = pf;
 
     return find_data(pclst,&qinfo);
 }
 
-int delete_data_no_free(cluster_head_t *pclst, char *pdata)
+int do_delete_data_no_free(cluster_head_t *pclst, char *pdata, spt_get_key pf)
 {
     query_info_t qinfo = {0};
     spt_vec *pvec_start;
@@ -2928,11 +3028,12 @@ int delete_data_no_free(cluster_head_t *pclst, char *pdata)
     qinfo.endbit = DATA_BIT_MAX;
     qinfo.data = pdata;
     qinfo.free_flag = 0;
+    qinfo.get_key = pf;
 
     return find_data(pclst,&qinfo);
 }
 
-cluster_head_t *find_next_cluster(cluster_head_t *pclst, char *pdata)
+cluster_head_t *find_next_cluster(cluster_head_t *pclst, char *pdata, spt_get_key pf)
 {
     query_info_t qinfo = {0};
     int ret;
@@ -2946,15 +3047,32 @@ cluster_head_t *find_next_cluster(cluster_head_t *pclst, char *pdata)
     qinfo.startid = pclst->vec_head;
     qinfo.endbit = pclst->endbit;
     qinfo.data = pdata;
+    qinfo.get_key = pf;
 
     ret = find_data(pclst, &qinfo);
     if(ret >= 0)
     {
         pdh = (spt_dh *)db_id_2_ptr(pclst, qinfo.db_id);
         pdext_h = (spt_dh_ext *)pdh->pdata;    
-        if(qinfo.cmp_result <= 0)
+        if(qinfo.cmp_result == 0)
         {
             return pdext_h->plower_clst;
+        }
+        else if(qinfo.cmp_result < 0)
+        {
+            pvec = (spt_vec *)vec_id_2_ptr(pclst, qinfo.vec_id);
+            if(pvec->type == SPT_VEC_DATA)
+            {
+                return pdext_h->plower_clst;
+            }
+            else
+            {
+                pvec = (spt_vec *)vec_id_2_ptr(pclst, pvec->rd);
+                ret = find_lowest_data(pclst, pvec);
+                pdh = (spt_dh *)db_id_2_ptr(pclst, ret);
+                pdext_h = (spt_dh_ext *)pdh->pdata;
+                return pdext_h->plower_clst;
+            }
         }
         else
         {
@@ -2967,7 +3085,7 @@ cluster_head_t *find_next_cluster(cluster_head_t *pclst, char *pdata)
             }
             else
             {
-                pvec = (spt_vec *)db_id_2_ptr(pclst, phang_vec->rd);
+                pvec = (spt_vec *)vec_id_2_ptr(pclst, phang_vec->rd);
                 ret = find_lowest_data(pclst, pvec);
                 pdh = (spt_dh *)db_id_2_ptr(pclst, ret);
                 pdext_h = (spt_dh_ext *)pdh->pdata;
@@ -2979,14 +3097,35 @@ cluster_head_t *find_next_cluster(cluster_head_t *pclst, char *pdata)
     {
         spt_debug("find_data err!\r\n");
         assert(0);
+        return NULL;
     }
 }
 
-cluster_head_t *spt_first_level_clst_init()
+int insert_data(cluster_head_t *pclst, char *pdata, spt_get_key pf)
+{
+    cluster_head_t *pnext_clst;
+
+    pnext_clst = find_next_cluster(pclst, pdata, pf);
+    if(pnext_clst == NULL)
+    {
+        return SPT_MASKED;
+    }
+    return do_insert_data(pnext_clst, pdata, pf);
+}
+
+int delete_data(cluster_head_t *pclst, char *pdata, spt_get_key pf)
+{
+    cluster_head_t *pnext_clst;
+
+    pnext_clst = find_next_cluster(pclst, pdata, pf);
+    return do_delete_data(pnext_clst, pdata, pf);
+} 
+
+cluster_head_t *spt_first_level_clst_init(u64 start, u64 end, int threadnum)
 {
     spt_dh_ext *pdh_ext;
     
-    ptopclst = cluster_init(0, 0, 16);
+    ptopclst = cluster_init(0, start, end, threadnum, spt_upper_get_key);
     if(ptopclst == NULL)
         return NULL;
     pdh_ext = malloc(sizeof(spt_dh_ext)+DATA_SIZE);
@@ -2999,7 +3138,7 @@ cluster_head_t *spt_first_level_clst_init()
     pdh_ext->plower_clst = pgclst;
     memset(pdh_ext->data, 0xff, 2);
 
-    insert_data(ptopclst, (char *)pdh_ext);
+    do_insert_data(ptopclst, (char *)pdh_ext, spt_upper_get_key);
     return ptopclst;
 }
 
@@ -4379,8 +4518,7 @@ int diff_identify(char *a, char *b,u64 start, u64 len, vec_cmpret_t *result)
 
 spt_thrd_t *spt_thread_init(int thread_num)
 {
-    int i;
-    g_thrd_h = malloc(sizeof(spt_thrd_t) + thread_num*sizeof(spt_thrd_data));
+    g_thrd_h = malloc(sizeof(spt_thrd_t));
     if(g_thrd_h == NULL)
     {
         spt_debug("OOM\r\n");
@@ -4390,23 +4528,7 @@ spt_thrd_t *spt_thread_init(int thread_num)
     g_thrd_h->black_white_map = SPT_BWMAP_ALL_ONLINE;
     g_thrd_h->online_map = 0;
     g_thrd_h->tick = 0;
-
-    for(i=0;i<thread_num;i++)
-    {
-        g_thrd_h->thrd_data[i].thrd_id = i;
-        g_thrd_h->thrd_data[i].vec_cnt = 0;
-        g_thrd_h->thrd_data[i].vec_list_cnt = 0;
-        g_thrd_h->thrd_data[i].data_cnt = 0;
-        g_thrd_h->thrd_data[i].data_list_cnt = 0;
-        g_thrd_h->thrd_data[i].vec_free_in = SPT_NULL;
-        g_thrd_h->thrd_data[i].vec_alloc_out = SPT_NULL;
-        g_thrd_h->thrd_data[i].data_free_in = SPT_NULL;
-        g_thrd_h->thrd_data[i].data_alloc_out = SPT_NULL;
-        g_thrd_h->thrd_data[i].rsv_cnt = 0;
-        g_thrd_h->thrd_data[i].rsv_list = SPT_NULL;
-        fill_in_rsv_list_simple(pgclst, SPT_PER_THRD_RSV_CNT, i);
-    }
-    
+   
     return g_thrd_h;
 }
 
@@ -4443,6 +4565,7 @@ u64 spt_atomic64_clear_bit_return(int nr, atomic64_t *v)
 
 int spt_thread_start(int thread)
 {
+#if 0    
     int cnt,ret;
     cnt = rsv_list_fill_cnt(pgclst, g_thrd_id);
     if(cnt > 0)
@@ -4450,7 +4573,8 @@ int spt_thread_start(int thread)
         ret = fill_in_rsv_list(pgclst, cnt, g_thrd_id);
         if(ret != SPT_OK)
             return ret;
-    }
+   }
+#endif 
     spt_atomic64_set_bit(thread, (atomic64_t *)&g_thrd_h->online_map);
     smp_mb();
     return SPT_OK;
@@ -4657,7 +4781,7 @@ void debug_cluster_travl(cluster_head_t *pclst)
     char *data;
 
     signpost = 0;
-    spt_stack_init(pstack, 100);
+    spt_stack_init(pstack, 1000);
     cur_data = SPT_INVALID;
 
     cur_vecid = pclst->vec_head;
@@ -4670,7 +4794,7 @@ void debug_cluster_travl(cluster_head_t *pclst)
         debug_travl_stack_destroy(pstack);
         return;
     }
-    rank = pclst->used_dblk_cnt;
+    rank = pclst->data_total;
     cur_data = st_vec_f.data;
     if(cur_data != SPT_NULL)
     {
@@ -4797,37 +4921,58 @@ void debug_cluster_travl(cluster_head_t *pclst)
     return;
 }
 
-int debug_delete(cluster_head_t *pclst, char *pdata)
+int debug_upper_delete(cluster_head_t *pclst, char *pdata)
 {
-    spt_dh_ext *pdh_ext;
-    int ret;
-    pdh_ext = (spt_dh_ext *)malloc(sizeof(spt_dh_ext));
-    pdh_ext->data = pdata;
-
-    ret = delete_data(pclst,(char *)pdh_ext);
-    free(pdh_ext);
-    return ret;
+    return do_delete_data(pclst, pdata, spt_bottom_get_key);
 }
 
-int debug_insert(cluster_head_t *pclst, char *pdata)
+int debug_upper_insert(cluster_head_t *pclst, char *pdata)
 {
     spt_dh_ext *pdh_ext;
 
     pdh_ext = (spt_dh_ext *)malloc(sizeof(spt_dh_ext)+DATA_SIZE);
 
     pdh_ext->data = (char *)(pdh_ext + 1);
+//    pdh_ext->plower_clst = (char *)*pdata;
     memcpy(pdh_ext->data, pdata, DATA_SIZE);
 
-    return insert_data(pclst,(char *)pdh_ext);
+    return do_insert_data(pclst,(char *)pdh_ext, spt_upper_get_key);
 }
+
+int debug_insert(cluster_head_t *pclst, char *pdata)
+{
+    char *p;
+    p = (char *)malloc(DATA_SIZE);
+
+    memcpy(p, pdata, DATA_SIZE);
+
+    return insert_data(pclst, p, spt_bottom_get_key);
+}
+
+int debug_gd_init()
+{
+    int i;
+    gd = (u64 *)malloc(sizeof(u64)*TEST_DATA_MAX);
+    if(gd == NULL)
+    {
+        spt_debug("gd malloc return NULL\r\n");
+        return SPT_ERR;
+    }
+    gd[0] = gd[1] = 1;
+    for(i=2;i<TEST_DATA_MAX;i++)
+        gd[i] = gd[i-1] + gd[i-2];
+
+    return SPT_OK;
+}
+
 void debug_insert_all()
 {
     int i;
     for(i=0;i<DBG_DATA_NUM;i++)
     {
-        debug_insert(pgclst, (char*)&g_data[i]);
+        debug_insert(ptopclst, (char*)&g_data[i]);
     }
-    debug_cluster_travl(pgclst);
+    debug_cluster_travl(ptopclst);
 }
 spt_sort_info *pdbg_sort;
 
@@ -4842,6 +4987,7 @@ void debug_sort(cluster_head_t *pclst)
         pdh_ext = (spt_dh_ext *)(pdbg_sort->array[i]);
         debug_data_print(pdh_ext->data);
     }
+    spt_order_array_free(pdbg_sort);
 }
 #if 0
 void debug_vec_print(spt_vec_r *pvec_r, int vec_id)
@@ -5309,6 +5455,7 @@ int main()
 
 u64 gdata;
 query_info_t g_qinfo = {0};
+#if 0
 void *spt_thread(void *arg)
 {
     cpu_set_t mask;
@@ -5405,7 +5552,7 @@ void *spt_thread(void *arg)
                 spt_debug("@@@@@@@@@@@\r\n");
                 while(1);
             }
-            ret = insert_data(pgclst, (char *)&g_data[j]);
+            ret = insert_data(pgclst, (char *)&g_data[j], spt_bottom_get_key);
             if(ret == SPT_OK)
             {
                 atomic64_add(1,(atomic64_t *)&g_dbg_info.insert_ok);
@@ -5433,7 +5580,7 @@ void *spt_thread(void *arg)
                 spt_debug("@@@@@@@@@@@\r\n");
                 while(1);
             }        
-            ret = delete_data(pgclst, (char *)&g_data[j]);
+            ret = delete_data(pgclst, (char *)&g_data[j], spt_bottom_get_key);
             if(ret == SPT_OK)
             {
                 atomic64_add(1,(atomic64_t *)&g_dbg_info.delete_ok);
@@ -5465,7 +5612,102 @@ thread_exit:
     }
     return 0;    
 }
+#else
+void *spt_thread(void *arg)
+{
+    cpu_set_t mask;
+    int i,j, ret;
+//    u64 order_id;
+//    spt_vec *pvec;
+    //spt_vec *pvec, *pid_2_ptr;
+    //spt_dh *pdb, *pdbid_2_ptr;
+    
+//    u64 start, end;
+    i = (long)arg;
 
+    g_thrd_id = i;
+    CPU_ZERO(&mask); 
+    CPU_SET(i,&mask);
+
+    if (sched_setaffinity(0, sizeof(mask), &mask) == -1)
+    {
+        printf("warning: could not set CPU affinity, continuing...\n");
+    }
+    printf("writefn%d,start\n",i);
+//    spt_thread_start();
+
+    for(i=0;i<100000;i++)
+    {
+        spt_thread_start(g_thrd_id);
+        for(j=0;j<TEST_DATA_MAX;j++)
+        {
+insert_again:            
+            ret = debug_insert(ptopclst, (char *)&gd[j]);
+            if(ret == SPT_OK)
+            {
+                atomic64_add(1,(atomic64_t *)&g_dbg_info.insert_ok);
+            }
+            else
+            {
+                atomic64_add(1,(atomic64_t *)&g_dbg_info.insert_fail);
+                if(ret == SPT_MASKED)
+                {
+                    spt_thread_exit(g_thrd_id);
+                    spt_thread_start(g_thrd_id);
+                    goto insert_again;
+                }
+                if(ret == SPT_WAIT_AMT)
+                {
+                    atomic64_add(1,(atomic64_t *)&g_dbg_info.ret_wait);
+                    spt_thread_exit(g_thrd_id);
+                    spt_thread_start(g_thrd_id);
+                    goto insert_again;
+                }
+                if(ret == SPT_NOMEM)
+                {
+                    atomic64_add(1,(atomic64_t *)&g_dbg_info.ret_nomem);
+                    spt_thread_exit(g_thrd_id);
+                    goto thread_exit;
+                }                
+            }
+        }
+        #if 0
+        for(j=0;j<DBG_DATA_NUM;j++)
+        {
+            ret = delete_data(pgclst, (char *)&gd[j], spt_bottom_get_key);
+            if(ret == SPT_OK)
+            {
+                atomic64_add(1,(atomic64_t *)&g_dbg_info.delete_ok);
+            }
+            else
+            {
+                atomic64_add(1,(atomic64_t *)&g_dbg_info.delete_fail);
+                if(ret == SPT_WAIT_AMT)
+                {
+                    atomic64_add(1,(atomic64_t *)&g_dbg_info.ret_wait);
+                    goto thread_exit;
+                }
+                if(ret == SPT_NOMEM)
+                {
+                    atomic64_add(1,(atomic64_t *)&g_dbg_info.ret_nomem);
+                    spt_thread_exit(g_thrd_id);
+                    goto thread_exit;
+                }                
+            }
+        }
+        #endif
+        spt_thread_exit(g_thrd_id);
+    }
+thread_exit:
+    spt_debug("test%d done\r\n", g_thrd_id);
+    while(1)
+    {
+
+    }
+    return 0;    
+}
+
+#endif
 
 int main()
 {
@@ -5475,9 +5717,11 @@ int main()
     cpu_set_t mask;
 
     CPU_ZERO(&mask); 
-    thread_num = 1;
+    thread_num = 3;
+    g_thrd_id = thread_num-1;
+    CPU_SET(thread_num, &mask);
 
-    pgclst = cluster_init(0,0,DATA_BIT_MAX);
+    pgclst = cluster_init(1,0,DATA_BIT_MAX, thread_num, spt_bottom_get_key);
     if(pgclst == NULL)
     {
         spt_debug("cluster_init err\r\n");
@@ -5492,9 +5736,18 @@ int main()
         return 1;
     }
     //test_vec_alloc_n_times(&pgclst);
+    spt_first_level_clst_init(0, 4, thread_num);
+//    debug_insert_all();
+    debug_gd_init();
+
+
+    if (sched_setaffinity(0, sizeof(mask), &mask) == -1)
+    {
+        printf("warning: could not set CPU affinity, continuing...\n");
+    }
 
 #if 1
-    for(num=0; num <thread_num; num++)
+    for(num=0; num <thread_num-1; num++)
     {
         err = pthread_create(&ntid, NULL, spt_thread, (void *)num);
         if (err != 0)
@@ -5504,7 +5757,8 @@ int main()
 
     while(1)
     {
-        sleep(1);
+        //sleep(1);
+        spt_divided_scan(ptopclst);
     }
     
     return 0;

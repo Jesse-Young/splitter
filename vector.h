@@ -55,12 +55,17 @@
 
 
 #define SPT_SORT_ARRAY_SIZE (4096*8)
-#define SPT_DVD_CNT_PER_TIME (100)
+#define SPT_DVD_CNT_PER_TIME (10)
+#define SPT_DVD_THRESHOLD_VA (50)
+
+typedef char*(*spt_get_key)(char *);
+
 typedef struct
 {
     int idx;
-    int size;
-    char *array[0];
+    int size;//数据大小
+    int cnt;//实际数据个数
+    char *array[0];//pdh->pdata
 }spt_sort_info;
 
 typedef struct
@@ -161,8 +166,8 @@ typedef struct cluster_head
     u64 startbit;
     u64 endbit;
     int is_bottom;
+    volatile unsigned int data_total;
 
-    volatile unsigned int data_cnt;
     unsigned int pg_num_max;
     unsigned int pg_num_total;
     unsigned int pg_cursor;
@@ -179,8 +184,13 @@ typedef struct cluster_head
     unsigned int used_dblk_cnt;
     unsigned int buf_db_cnt;
     unsigned int buf_vec_cnt;
+    unsigned int thrd_total;
     
+    spt_thrd_data *thrd_data;
+
+    int status;
     unsigned int debug;
+    spt_get_key get_key;
     void (*freedata)(char *p, u8 flag);
     volatile char *pglist[0];
 }cluster_head_t;
@@ -237,6 +247,8 @@ typedef struct spt_query_info
     u8 free_flag;//删除时标记是否释放数据内存。
     char cmp_result;
     u32 db_id;//查询\插入\删除的返回值
+    u32 vec_id;//返回值，vec_id bit之前的都相等
+    spt_get_key get_key;
 }query_info_t;
 
 

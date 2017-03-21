@@ -146,10 +146,11 @@ extern char* vec_id_2_ptr(cluster_head_t *pclst, unsigned int id);
 #define SPT_NOMEM -2
 #define SPT_WAIT_AMT -3
 #define SPT_DO_AGAIN -4
+#define SPT_MASKED -5
 #define SPT_NOT_FOUND 1
 
 unsigned int db_alloc(cluster_head_t *pclst, spt_dh **db);
-cluster_head_t * cluster_init(int is_bottom, u64 startbit, u64 endbit);
+cluster_head_t * cluster_init(int is_bottom, u64 startbit, u64 endbit, int thread_num, spt_get_key pf);
 int vec_free_to_buf(cluster_head_t *pclst, int id, int thread_id);
 int db_free_to_buf(cluster_head_t *pcluster, int id, int thread_id);
 unsigned int vec_alloc_combo(cluster_head_t *pclst, int thread_id, spt_vec **vec);
