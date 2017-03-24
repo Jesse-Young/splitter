@@ -124,12 +124,21 @@ char *alloc_data()
 {
     return malloc(DATA_SIZE);
 }
-void free_data(char *p, u8 flag)
+void free_data(char *p)
 {
-    if(flag)
-        free(p);
+    free(p);
 }
+void default_end_get_key(char *p)
+{
+    return;
+}
+char *upper_get_key(char *pdata)
+{
+    spt_dh_ext *ext_head;
 
+    ext_head = (spt_dh_ext *)pdata;
+    return ext_head->data;
+}
 char* cluster_alloc_page()
 {
     void *p;
@@ -289,7 +298,10 @@ cluster_head_t * cluster_init(int is_bottom,
                               u64 startbit, 
                               u64 endbit, 
                               int thread_num,
-                              spt_get_key pf)
+                              spt_cb_get_key pf,
+                              spt_cb_end_key pf2,
+                              spt_cb_free pf_free,
+                              spt_cb_construct pf_con)
 {
     cluster_head_t *phead;
     int ptr_bits, i;
@@ -328,9 +340,23 @@ cluster_head_t * cluster_init(int is_bottom,
     phead->startbit = startbit;
     phead->endbit = endbit;
     phead->thrd_total = thread_num;
-    phead->get_key = pf;
     ///TODO:
-    phead->freedata = free_data;
+    phead->freedata = pf_free;
+    phead->construct_data = pf_con;
+    if(is_bottom)
+    {
+        phead->get_key = pf;
+        phead->get_key_in_tree = pf;
+        phead->get_key_end = pf2;
+        phead->get_key_in_tree_end = pf2;
+    }
+    else
+    {
+        phead->get_key = pf;
+        phead->get_key_in_tree = upper_get_key;
+        phead->get_key_end = pf2;
+        phead->get_key_in_tree_end = default_end_get_key;
+    }
 
     phead->thrd_data = (spt_thrd_data *)malloc(sizeof(spt_thrd_data)*thread_num);
     if(phead->thrd_data == NULL)
@@ -889,8 +915,13 @@ void db_buf_free(cluster_head_t *pclst, int thread_id)
         }
         pdh = (spt_dh *)db_id_2_ptr(pclst, pnode->id);
         if(pdh->pdata != NULL)
-            pclst->freedata(pdh->pdata, spt_data_free_flag(pdh));
-
+        {
+            if(spt_data_free_flag(pdh))
+            {
+                pclst->freedata(pdh->pdata);
+            }
+        }
+           // pclst->freedata(pdh->pdata, spt_data_free_flag(pdh));
         db_free(pclst, pnode->id);
         tmp_id = list_vec_id;
         list_vec_id = pnode->next;

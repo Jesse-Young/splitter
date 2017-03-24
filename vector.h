@@ -58,7 +58,12 @@
 #define SPT_DVD_CNT_PER_TIME (10)
 #define SPT_DVD_THRESHOLD_VA (50)
 
-typedef char*(*spt_get_key)(char *);
+typedef char*(*spt_cb_get_key)(char *);
+typedef void (*spt_cb_free)(char *);
+typedef void (*spt_cb_end_key)(char *);
+typedef char*(*spt_cb_construct)(char *);
+
+
 
 typedef struct
 {
@@ -190,8 +195,13 @@ typedef struct cluster_head
 
     int status;
     unsigned int debug;
-    spt_get_key get_key;
-    void (*freedata)(char *p, u8 flag);
+    spt_cb_get_key get_key;
+    spt_cb_get_key get_key_in_tree;
+    //void (*freedata)(char *p, u8 flag);
+    spt_cb_free freedata;
+    spt_cb_end_key get_key_end;
+    spt_cb_end_key get_key_in_tree_end;
+    spt_cb_construct construct_data;
     volatile char *pglist[0];
 }cluster_head_t;
 
@@ -244,11 +254,14 @@ typedef struct spt_query_info
     u64 endbit;
     u32 startid;
     u8 op;
+    u8 data_type;
     u8 free_flag;//删除时标记是否释放数据内存。
     char cmp_result;
     u32 db_id;//查询\插入\删除的返回值
+    u32 ref_cnt;//返回值，副本数量
     u32 vec_id;//返回值，vec_id bit之前的都相等
-    spt_get_key get_key;
+    spt_cb_get_key get_key;
+    spt_cb_end_key get_key_end;
 }query_info_t;
 
 
